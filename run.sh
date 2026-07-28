@@ -10,6 +10,16 @@
 set -euo pipefail
 cd "$(dirname "$0")"            # always operate from the project folder
 
+# ── Node: prefer the project-local one ./setup.sh may have installed ────────
+if [ -x ".node/bin/node" ]; then
+  export PATH="$(pwd)/.node/bin:$PATH"
+fi
+if ! command -v npm >/dev/null 2>&1; then
+  echo "✗ npm not found. Run ./setup.sh first — it installs Node into ./.node"
+  echo "  if the system has none."
+  exit 1
+fi
+
 # ── Pick a Python that has Sionna RT installed ──────────────────────────────
 PYTHON="${SRTS_PYTHON:-}"
 if [ -z "$PYTHON" ]; then
