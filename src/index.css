@@ -1,0 +1,335 @@
+@import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Hanken+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+
+/* ──────────────────────────────────────────────────────────────────────────
+   SionnaRT Studio — "Bone & Clay"
+
+   A wireless digital twin is a measuring instrument, so the interface is
+   drafting paper rather than a dashboard: warm ivory ground, hairline rules,
+   ink-black type, and exactly one warm accent reserved for things you can act
+   on. Readouts are set in mono because the numbers here are evidence.
+
+   Palette follows anthropic.com: bone #F0EEE6 ground, book-cloth clay #CC785C
+   accent, near-black warm ink #141413.
+   ────────────────────────────────────────────────────────────────────────── */
+
+@theme {
+  --font-sans: "Hanken Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Newsreader", ui-serif, Georgia, serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* The UI leans on `slate-*` utilities in ~400 places. Rather than rewrite
+     every call site, the ramp itself is retuned from cool grey to warm stone so
+     the whole instrument sits on the same paper. */
+  --color-slate-50:  #faf9f5;
+  --color-slate-100: #f4f2ea;
+  --color-slate-200: #e8e5da;
+  --color-slate-300: #d6d2c4;
+  --color-slate-400: #a8a49a;
+  --color-slate-500: #8c8880;
+  --color-slate-600: #6b6862;
+  --color-slate-700: #4f4d48;
+  --color-slate-800: #2f2e2b;
+  --color-slate-900: #141413;
+  --color-slate-950: #0d0d0c;
+
+  /* Status families, desaturated to sit beside clay without shouting. */
+  --color-red-50:  #f9efec;
+  --color-red-100: #f2ddd8;
+  --color-red-200: #e5c0b8;
+  --color-red-300: #d9aaa2;
+  --color-red-400: #c66b5d;
+  --color-red-500: #b4483c;
+  --color-red-600: #a03d33;
+  --color-red-700: #85332a;
+
+  --color-emerald-50:  #eef2ec;
+  --color-emerald-100: #dde5d9;
+  --color-emerald-400: #7a9a74;
+  --color-emerald-500: #5f7f5a;
+  --color-emerald-600: #4e6b4a;
+  --color-emerald-700: #3f563c;
+  --color-green-500: #5f7f5a;
+  --color-green-600: #4e6b4a;
+
+  --color-amber-50:  #f8f2e6;
+  --color-amber-100: #efe3cc;
+  --color-amber-300: #d8bd88;
+  --color-amber-400: #b8933f;
+  --color-amber-500: #9c7a34;
+  --color-amber-600: #86682c;
+  --color-amber-700: #6f5624;
+
+  --color-orange-50:  #f8f1ec;
+  --color-orange-100: #f0e2d8;
+  --color-orange-300: #dcb79a;
+  --color-orange-400: #d18f6e;
+  --color-orange-500: #cc785c;
+  --color-orange-600: #b2624a;
+  --color-orange-700: #94503c;
+}
+
+:root {
+  /* Surfaces. The ink-* names are inherited from the previous theme and kept so
+     existing var() references keep resolving; the values are now warm paper. */
+  --ink-900: #ebe8dd;   /* deepest inset */
+  --ink-850: #f2f0e8;
+  --ink-800: #ffffff;   /* panel / card */
+  --ink-750: #f7f5ef;
+  --ink-700: #ebe7dc;   /* active / pressed */
+  --line:      #e3e0d6; /* hairline */
+  --line-soft: #eeece3;
+
+  --page: #f0eee6;      /* bone */
+
+  /* Text */
+  --text-hi:  #141413;
+  --text-mid: #6b6862;
+  --text-lo:  #8c8880;
+
+  /* Accent — Anthropic book cloth. Reserved for actionable things. */
+  --accent:      #cc785c;
+  --accent-deep: #b2624a;
+  --accent-soft: #f7efe9;
+  --accent-glow: rgba(204, 120, 92, 0.22);
+
+  /* Category + status. Muted so a dense panel never reads as a colour chart. */
+  --data:   #4a727e;   /* coverage / heatmap */
+  --study:  #7b6b93;   /* channel response */
+  --ok:     #5f7f5a;
+  --warn:   #9c7a34;
+  --bad:    #b4483c;
+}
+
+html, body {
+  background-color: var(--page);
+  color: var(--text-hi);
+  font-family: var(--font-sans);
+  font-feature-settings: "tnum";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* Flat paper. No gradient wash, no grid overlay — the 3D viewport and the data
+   are the only things allowed to carry visual energy. */
+
+/* ── Scrollbar ──────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #d6d2c4;
+  border-radius: 99px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: #b9b4a5; background-clip: padding-box; }
+
+::selection { background: var(--accent-soft); color: var(--accent-deep); }
+
+/* ── Type roles ─────────────────────────────────────────────────────────── */
+.font-display {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  letter-spacing: -0.011em;
+}
+
+/* Panel titles: serif, sentence case, quiet. The previous all-caps bold
+   headings made every panel compete for the same attention. */
+.panel-title {
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: var(--text-hi);
+  text-transform: none;
+}
+
+/* Small structural label. Field groups and column headers only. */
+.eyebrow {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-lo);
+}
+
+/* Numeric evidence — always mono, always tabular. */
+.readout {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* ── Panel chrome ───────────────────────────────────────────────────────── */
+.panel {
+  position: relative;
+  background: var(--ink-800);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(20, 20, 19, 0.03);
+}
+.panel-flush {
+  background: var(--ink-750);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+/* Hairline rule under a panel heading. */
+.rule {
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+/* ── Actions ────────────────────────────────────────────────────────────────
+   Primary is solid clay. Flat: no gradient, no glow — the colour alone is the
+   signal, and there is only ever one primary per panel. */
+.btn-signal {
+  background: var(--accent);
+  color: #ffffff;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+.btn-signal:hover:not(:disabled) {
+  background: var(--accent-deep);
+  border-color: var(--accent-deep);
+}
+.btn-signal:active:not(:disabled) { transform: translateY(1px); }
+.btn-signal:disabled {
+  background: var(--ink-750);
+  color: var(--text-lo);
+  border-color: var(--line);
+}
+
+/* Secondary — paper with a hairline, clay only on hover. */
+.btn-quiet {
+  background: #ffffff;
+  color: var(--text-hi);
+  font-weight: 600;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.btn-quiet:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent-deep);
+  background: var(--accent-soft);
+}
+.btn-quiet:disabled { color: var(--text-lo); background: var(--ink-750); }
+
+/* ── Navigation: the beam sweep ─────────────────────────────────────────────
+   The signature. A single clay rule slides between sections the way a phased
+   array steers a beam — one continuous movement instead of four separate
+   highlights. Everything else in the chrome stays still. */
+/* Display is left to the utility classes on the element: setting it here
+   ties with Tailwind's `.hidden` on specificity and, loading later, wins —
+   which would keep the desktop nav visible on mobile. */
+.beam-nav { position: relative; gap: 2px; }
+.beam-nav__tab {
+  position: relative;
+  z-index: 1;
+  padding: 10px 16px 12px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-mid);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.18s ease;
+}
+.beam-nav__tab:hover { color: var(--text-hi); }
+.beam-nav__tab[aria-current="page"] { color: var(--text-hi); }
+.beam-nav__beam {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: transform 0.42s cubic-bezier(0.22, 1, 0.36, 1),
+              width 0.42s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ── Native form controls ───────────────────────────────────────────────── */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 3px;
+  border-radius: 99px;
+  background-color: #ddd9cb;
+  outline: none;
+  cursor: ew-resize;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 2px solid var(--accent);
+  transition: box-shadow 0.15s ease, transform 0.1s ease;
+}
+input[type="range"]::-webkit-slider-thumb:hover {
+  box-shadow: 0 0 0 5px var(--accent-glow);
+}
+input[type="range"]:active::-webkit-slider-thumb { transform: scale(0.92); }
+input[type="range"]::-moz-range-thumb {
+  width: 15px; height: 15px; border-radius: 50%;
+  background: #fff; border: 2px solid var(--accent);
+}
+
+input[type="checkbox"] { accent-color: var(--accent); width: 13px; height: 13px; }
+
+input[type="number"],
+input[type="text"],
+select { font-variant-numeric: tabular-nums; }
+
+input[type="number"]:focus,
+input[type="text"]:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+select { color-scheme: light; }
+
+/* Keyboard users get the same clay ring everywhere, including custom tabs. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+button {
+  transition: background-color 0.15s ease, color 0.15s ease,
+              border-color 0.15s ease, transform 0.1s ease;
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-rise { animation: rise 0.45s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-rise { animation: none; }
+  .beam-nav__beam { transition: none; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.card-dark {
+  background-color: var(--ink-800);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+}

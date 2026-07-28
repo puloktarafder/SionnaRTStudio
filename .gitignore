@@ -1,0 +1,13 @@
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+
+# Generated OSM scene snapshots.
+artifacts/osm-scene/

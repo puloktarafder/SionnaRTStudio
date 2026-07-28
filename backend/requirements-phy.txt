@@ -1,0 +1,5 @@
+# Optional: full PHY link-level chain (5G NR PUSCH BER/BLER sweeps via
+# /api/phyber). Torch-based and ~4 GB of wheels — the core app runs without it.
+# The PHY is pinned to the CPU at runtime; the GPU stays exclusive to the
+# Mitsuba/DrJit ray tracer.
+sionna==2.0.1
