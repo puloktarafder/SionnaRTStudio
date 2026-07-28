@@ -142,29 +142,49 @@ geodetic reprojection; the renderer maps ENU values into Three.js as
 
 - **NVIDIA GPU + CUDA** — ray tracing is pinned to Mitsuba's
   `cuda_ad_mono_polarized` variant; `GET /api/health` reports the active variant.
-- **Node.js 20+** and **Python 3.11+**.
+- **Python 3.11+**.
+- **Node.js 20+** — optional. If the machine has no Node, or one older than 20
+  (Ubuntu 24.04's `apt install nodejs` still ships 18), `setup.sh` downloads a
+  pinned Node into `./.node` automatically. No sudo, no system packages.
 
 ## Quick start
 
 ```bash
-./setup.sh     # once: installs frontend deps + a local Python venv with Sionna
+./setup.sh     # once: installs Node if needed + frontend deps + a Python venv with Sionna
 ./run.sh       # starts backend (:8000) + frontend (:3000); Ctrl+C stops both
 ```
 
 (or `npm run setup` / `npm start`). Then open **http://localhost:3000**.
 The header badge shows **RT-CORE ONLINE** when the backend is reachable.
 
-Two environment variables override the defaults:
+Environment variables override the defaults:
 
 | Variable | Default | Purpose |
 | -------- | ------- | ------- |
 | `SRTS_PYTHON` | `./.venv/bin/python` | Point at an existing Python environment that already has Sionna, instead of the local venv. Read by `setup.sh` and `run.sh`. |
 | `SRTS_BACKEND_PORT` | `8000` | Move the backend off port 8000 when something else holds it. Read by both `run.sh` and the Vite proxy, so the frontend follows automatically. |
+| `SRTS_NODE_VERSION` | `22.23.1` | Which Node to fetch when `setup.sh` installs one into `./.node`. |
+| `SRTS_NODE_INSTALL` | `auto` | Set to `off` to forbid the automatic Node download; `setup.sh` then fails if no Node 20+ is on `PATH`. |
 
 ```bash
 SRTS_PYTHON=/path/to/venv/bin/python ./run.sh
 SRTS_BACKEND_PORT=8011 ./run.sh
+SRTS_NODE_INSTALL=off ./setup.sh
 ```
+
+### How Node is resolved
+
+`setup.sh` and `run.sh` prefer `./.node/bin` over the system Node, so a
+project-local install wins without touching anything outside this folder:
+
+1. `./.node/bin/node`, if a previous `setup.sh` put one there.
+2. Otherwise the system `node`, if it is v20 or newer.
+3. Otherwise `setup.sh` downloads the official Node tarball for this
+   platform, verifies it against the published `SHASUMS256.txt`, and unpacks it
+   into `./.node`.
+
+`.node/` is gitignored and adds ~200 MB. Delete it to fall back to the system
+Node, or to force a re-download on the next `setup.sh`.
 
 ## Using it
 
@@ -367,6 +387,13 @@ concurrent sweep returns `409` — only one job runs at a time.
 
 **Frontend changes do not appear.** Hard-refresh the tab; Vite's cached module
 graph survives an ordinary reload.
+
+**`setup.sh` cannot download Node.** It needs `curl` or `wget`, plus `tar` and
+`xz`, and prints which one is missing — on a minimal Ubuntu image install them
+with `sudo apt install curl xz-utils`. Behind a proxy or with no network, get
+Node 20+ onto `PATH` yourself and re-run with `SRTS_NODE_INSTALL=off ./setup.sh`
+to skip the download entirely. Automatic install covers Linux and macOS on
+x86-64 and arm64; anywhere else it stops and asks you to install Node manually.
 
 ## Notes
 
