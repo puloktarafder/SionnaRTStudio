@@ -26,6 +26,17 @@ uvicorn backend.main:app --port 8000
 Then start the frontend (`npm install && npm run dev`); Vite proxies `/api` → `:8000`.
 Or just use `./run.sh` from the project root to start both.
 
+## Tests
+
+`backend/tests/` covers the pure-math pieces — solver reductions, link-level
+KPIs, the A3 handover state machine, and scene-export packaging. No GPU, no
+Sionna scene build, no network:
+
+```bash
+# from the project root
+./.venv/bin/python -m unittest discover backend/tests
+```
+
 ## Endpoints
 
 | Method | Path            | Body                                                          | Returns                  |

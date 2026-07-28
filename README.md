@@ -35,8 +35,10 @@ browser.
 - [Quick start](#quick-start)
 - [Using it](#using-it)
 - [Channel-response exports (CIR / CFR)](#channel-response-exports-cir--cfr)
-- [Reproducing the OSM scene](#reproducing-the-osm-scene)
-- [Research artifact](#research-artifact)
+- [Standalone Sionna RT scene export](#standalone-sionna-rt-scene-export)
+- [Freezing an OSM scene](#freezing-an-osm-scene)
+- [Running the tests](#running-the-tests)
+- [Troubleshooting](#troubleshooting)
 - [Notes](#notes)
 - [License](#license)
 
@@ -99,6 +101,13 @@ browser.
   in one scene dispatch. Download raw `a, tau = paths.cir()` without an OFDM
   grid, or include `h = paths.cfr()` over configurable subcarriers. Multi-device
   NPZ files preserve Sionna's full receiver/antenna/transmitter tensor axes.
+- **Standalone Sionna RT scene export** — download the exact Mitsuba scene the
+  backend ray-traces (`scene.xml` with ITU radio-material BSDFs plus one `.ply`
+  per building) alongside a generated `load_scene.py` that replays everything
+  Sionna keeps in Python rather than in the XML: carrier frequency, material
+  overrides, the `PlanarArray` config, every Tx/Rx, and the `PathSolver`
+  switches. Run it in a plain notebook to reproduce a solve with no app in the
+  loop.
 - **Project save / restore** — editable scene state autosaves in the browser. A
   versioned project JSON can also be exported and imported to move the complete
   geometry, Tx/Rx and antenna settings, solver/material controls, trajectory,
@@ -145,11 +154,16 @@ geodetic reprojection; the renderer maps ENU values into Three.js as
 (or `npm run setup` / `npm start`). Then open **http://localhost:3000**.
 The header badge shows **RT-CORE ONLINE** when the backend is reachable.
 
-`run.sh` uses the local `./.venv` by default. To point at an existing Python
-environment that already has Sionna:
+Two environment variables override the defaults:
+
+| Variable | Default | Purpose |
+| -------- | ------- | ------- |
+| `SRTS_PYTHON` | `./.venv/bin/python` | Point at an existing Python environment that already has Sionna, instead of the local venv. Read by `setup.sh` and `run.sh`. |
+| `SRTS_BACKEND_PORT` | `8000` | Move the backend off port 8000 when something else holds it. Read by both `run.sh` and the Vite proxy, so the frontend follows automatically. |
 
 ```bash
 SRTS_PYTHON=/path/to/venv/bin/python ./run.sh
+SRTS_BACKEND_PORT=8011 ./run.sh
 ```
 
 ## Using it
@@ -180,8 +194,9 @@ SRTS_PYTHON=/path/to/venv/bin/python ./run.sh
 6. **Export** — use **Export Project** / **Import Project** for a reloadable
    SionnaRTStudio project, or download the scene (OBJ / GeoJSON), propagation
    report (CSV), channel response (CIR / CFR), or a ray-traced channel grid /
-   explicitly labeled coverage proxy. Editable project inputs also autosave in
-   the current browser.
+   explicitly labeled coverage proxy. **Scene + load_scene.py (.zip)** exports the
+   ray-traced Mitsuba scene as a standalone Sionna RT project that runs outside
+   the app. Editable project inputs also autosave in the current browser.
 
 ## Channel-response exports (CIR / CFR)
 
@@ -236,6 +251,43 @@ h = paths.cfr(frequencies=subcarrier_frequencies(num_subcarriers, subcarrier_spa
 
 See [`backend/README.md`](backend/README.md) for the full API reference.
 
+## Standalone Sionna RT scene export
+
+The **Export** tab's *Sionna RT Scene Export* card downloads the ray-tracing
+scene as a self-contained Sionna RT project, so a solve can be reproduced with
+no app in the loop. Every mesh reference in the XML is relative, so the
+directory is relocatable as-is.
+
+| Member | Contents |
+| ------ | -------- |
+| `scene.xml` | Mitsuba scene with ITU radio-material BSDFs and relative mesh paths |
+| `meshes/*.ply` | Ground plane plus one extruded prism per building |
+| `load_scene.py` | Replays the Python-side setup Sionna keeps out of the XML |
+| `manifest.json` | The exact settings this export was generated from |
+| `README.md` | Usage notes for the bundle itself |
+
+The XML cannot carry what Sionna holds on the Python side, which is why the
+generated script exists. It replays the carrier frequency, radio-material
+overrides, the `PlanarArray` configuration, every transmitter/receiver (with
+each Tx's configured `power_dbm`), and the `PathSolver` interaction switches,
+ending in `paths.cir()` / `paths.cfr()`:
+
+```bash
+pip install sionna-rt
+python load_scene.py       # writes cir.npz next to the script
+```
+
+For a uniform-array scene the script writes a single `cir.npz`. When device
+array sizes differ, one dense tensor is impossible — a Sionna scene has one
+shared Tx array and one shared Rx array — so the script groups devices by exact
+array-size pair and writes one tensor per compatible combination under
+`channels/`, with `manifest.json` mapping each group to its file. Together they
+cover every Tx×Rx pair without padding or replacing any antenna array.
+
+Coordinates are ENU metres (x=East, y=North, z=Up) with the ground plane at
+z=0, matching the rest of the app. Device heights are roof-aware: a device over
+a building footprint sits on it.
+
 ## Freezing an OSM scene
 
 Both the browser and freezer call `src/utils.ts::parseOsmElements`:
@@ -250,6 +302,71 @@ buildings, and `osm_scene_manifest.json` with the query, bounds, counts, runtime
 and SHA-256 hashes under `artifacts/osm-scene/` by default. Use `--out-dir` to
 choose another destination. Re-run it only when intentionally creating a new
 dated scene snapshot; experiments should cite the frozen hashes.
+
+## Running the tests
+
+The backend suite covers the pure-math pieces — solver reductions, link-level
+KPIs, the A3 handover state machine, and scene-export packaging. **None of it
+needs a GPU or a Sionna scene build**, so it runs anywhere in well under a
+second:
+
+```bash
+./.venv/bin/python -m unittest discover backend/tests
+```
+
+| Suite | Covers |
+| ----- | ------ |
+| `test_solver_math.py` | Beamforming, channel metrics, coverage stats, geometry hashing |
+| `test_linklevel.py` | Shannon-capacity KPI reduction (open-loop / MRT / steered) |
+| `test_handover.py` | 3GPP A3 hysteresis + time-to-trigger state machine |
+| `test_scene_export.py` | Standalone scene bundle contents and manifest |
+
+Two frontend checks round it out — both offline, both fixture-based:
+
+```bash
+npm run check:osm-parser   # pins the shared OSM parser against a fixture
+npm run lint               # tsc --noEmit
+```
+
+`npm run check:osm-parser` guards `src/utils.ts::parseOsmElements`, which the
+browser and the scene freezer both call — it is the one piece of parsing where
+a silent regression would desynchronize the rendered scene from a frozen
+snapshot.
+
+## Troubleshooting
+
+**`RT-CORE ONLINE` never appears / requests fail.** The backend is unreachable.
+Confirm it is up and check which port it took: `curl localhost:8000/api/health`.
+If something else already holds 8000, restart with `SRTS_BACKEND_PORT=8011
+./run.sh` — the Vite proxy reads the same variable, so the frontend follows.
+
+**Solves are slow, and `/api/health` reports `"gpu": false`.** The backend pins
+Mitsuba's `cuda_ad_mono_polarized` variant only when it is actually available,
+so with no CUDA build it starts normally and silently falls back to a CPU
+variant rather than failing. Check the reported `variant`: anything not
+starting with `cuda` means rays are being traced on the CPU. Reinstall
+`mitsuba` against a working CUDA toolkit.
+
+**Rays pass straight through buildings.** Almost always a missing
+`mapbox_earcut` — trimesh cannot triangulate the footprints, so buildings never
+mesh and drop out of the ray-traced scene entirely. The browser gives no hint,
+but the backend log does: look for `[scene_build] WARNING: failed to extrude
+building`. Fix with `pip install mapbox_earcut` (it is in
+`backend/requirements.txt` for exactly this reason).
+
+**Fetching OSM fails.** The app tries two Overpass mirrors in order
+(`overpass-api.de`, then `overpass.kumi.systems`) with a 25-second query
+timeout, and reports the last error from each. Public Overpass instances rate-
+limit aggressively; a `429` or `504` from both usually just means wait, or draw
+a smaller bounding box.
+
+**`Run BER Sweep` is unavailable.** The Sionna PHY package is optional and not
+installed by `setup.sh`. `/api/health` reports it as `"phy"`. Install with
+`pip install -r backend/requirements-phy.txt` (~4 GB with torch). A second
+concurrent sweep returns `409` — only one job runs at a time.
+
+**Frontend changes do not appear.** Hard-refresh the tab; Vite's cached module
+graph survives an ordinary reload.
 
 ## Notes
 
