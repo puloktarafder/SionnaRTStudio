@@ -159,4 +159,38 @@ else
 fi
 
 echo
+echo "── Ray-tracing backend check ────────────────────────────────────"
+# Which Mitsuba variant this machine can actually initialize decides whether the
+# backend can serve at all. Resolve it now, while we can still explain the fix,
+# rather than letting the user discover it as an offline badge in the browser.
+SRTS_PY="${SRTS_PYTHON:-./.venv/bin/python}"
+RT_STATUS="$("$SRTS_PY" - <<'PY' 2>/dev/null || echo "error"
+import mitsuba as mi
+for name, label in (("cuda_ad_mono_polarized", "gpu"), ("llvm_ad_mono_polarized", "cpu")):
+    if name not in mi.variants():
+        continue
+    try:
+        mi.set_variant(name)
+        print(label)
+        break
+    except Exception:
+        continue
+else:
+    print("none")
+PY
+)"
+case "$RT_STATUS" in
+  gpu)  echo "✓ CUDA GPU ray tracing available." ;;
+  cpu)  echo "⚠ No usable CUDA GPU — ray tracing will run on the CPU (llvm)."
+        echo "  Correct results, much slower. Expected inside a VM: VirtualBox"
+        echo "  and friends cannot pass the host GPU through to the guest." ;;
+  none) echo "✗ Neither GPU nor CPU ray tracing can start on this machine."
+        echo "  Dr.Jit's CPU path needs the LLVM runtime, which is not bundled"
+        echo "  in the wheel and is missing from many clean Ubuntu images:"
+        echo "      sudo apt install llvm-runtime"
+        echo "  Then re-run ./setup.sh. Without it the backend will not start." ;;
+  *)    echo "⚠ Could not probe Mitsuba variants; skipping this check." ;;
+esac
+
+echo
 echo "✅ Setup complete.  Start everything with:   ./run.sh    (or: npm start)"

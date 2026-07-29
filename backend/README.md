@@ -8,8 +8,9 @@ consecutive solves over the same area reuse one build.
 
 ## Requirements
 
-- An **NVIDIA GPU + CUDA** — the Mitsuba variant is pinned to
-  `cuda_ad_mono_polarized` at startup.
+- An **NVIDIA GPU + CUDA** — recommended, not required. Startup prefers the
+  `cuda_ad_mono_polarized` Mitsuba variant and falls back to
+  `llvm_ad_mono_polarized` on the CPU when CUDA cannot initialize.
 - Python 3.11+.
 
 ## Run

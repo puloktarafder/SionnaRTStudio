@@ -30,12 +30,54 @@ import zipfile
 import mitsuba as mi
 import numpy as np
 
-# Force GPU ray tracing. Sionna RT picks the CUDA Mitsuba variant when one is
-# available, but pinning it here (before sionna is imported) makes that explicit
-# and lets /api/health report which device actually traces the rays.
+# Prefer GPU ray tracing. Sionna RT would pick a variant on its own, but pinning
+# one here (before sionna is imported) makes that explicit and lets /api/health
+# report which device actually traces the rays.
+#
+# mi.variants() lists what Mitsuba was COMPILED with, not what this host can
+# actually run — the published wheels always bundle the CUDA variants. So
+# membership alone is not enough: set_variant() is the call that initializes
+# CUDA, and it raises on any machine without a usable GPU (a VM with no
+# passthrough, a box with no NVIDIA card, a driver/library mismatch). Falling
+# through to a CPU variant keeps the backend serving instead of killing the
+# whole process at import time.
+# Only the `_ad_` variants carry the autodiff + vectorized types Sionna's solvers
+# need; the `scalar_*` ones are deliberately NOT candidates. Mitsuba will happily
+# select a scalar variant, but every solve then dies deep inside Sionna with
+# "epsilon(): input is not a Dr.Jit array" — a backend that answers /api/health
+# and fails every actual request is worse than one that refuses to start.
 _GPU_VARIANT = "cuda_ad_mono_polarized"
-if _GPU_VARIANT in mi.variants():
-    mi.set_variant(_GPU_VARIANT)
+_CPU_VARIANT = "llvm_ad_mono_polarized"
+
+_failures: list[str] = []
+for _candidate in (_GPU_VARIANT, _CPU_VARIANT):
+    if _candidate not in mi.variants():
+        _failures.append(f"{_candidate}: not compiled into this Mitsuba build")
+        continue
+    try:
+        mi.set_variant(_candidate)
+        break
+    except Exception as exc:  # noqa: BLE001 — any init failure means "try the next one"
+        _failures.append(f"{_candidate}: {str(exc).strip().splitlines()[0]}")
+        print(f"[startup] Mitsuba variant {_candidate!r} unavailable.")
+else:
+    # Dr.Jit's LLVM backend dlopen()s a system libLLVM; it is not bundled in the
+    # wheel, and a clean Ubuntu image often has no LLVM runtime at all. Say so,
+    # because the raw Dr.Jit message does not mention apt.
+    raise RuntimeError(
+        "No usable Mitsuba variant — cannot ray-trace on this machine.\n"
+        + "\n".join(f"  - {f}" for f in _failures)
+        + "\n\nWith no NVIDIA GPU, the CPU path needs the LLVM runtime:"
+        "\n  sudo apt install llvm-runtime"
+        "\nor point Dr.Jit at an existing one with DRJIT_LIBLLVM_PATH."
+    )
+
+if not (mi.variant() or "").startswith("cuda"):
+    print(
+        f"[startup] WARNING: no CUDA GPU — ray tracing on the CPU via "
+        f"{mi.variant()!r}. Solves will be far slower; /api/health reports "
+        f'"gpu": false.'
+    )
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
