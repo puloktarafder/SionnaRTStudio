@@ -140,8 +140,22 @@ geodetic reprojection; the renderer maps ENU values into Three.js as
 
 ## Requirements
 
-- **NVIDIA GPU + CUDA** — ray tracing is pinned to Mitsuba's
-  `cuda_ad_mono_polarized` variant; `GET /api/health` reports the active variant.
+- **Linux, or Windows via WSL2** — `setup.sh` and `run.sh` are bash scripts that
+  assume a POSIX venv layout, so there is no native Windows (cmd/PowerShell)
+  path. See [Windows (WSL2)](#windows-wsl2). macOS installs on Apple Silicon and
+  runs CPU-only; Intel Macs have no Mitsuba wheel at all.
+- **NVIDIA GPU + CUDA** — strongly recommended, not required. Ray tracing prefers
+  Mitsuba's `cuda_ad_mono_polarized` variant and falls back to the CPU
+  (`llvm_ad_mono_polarized`) when no usable GPU is present. Results are
+  identical; only speed differs. `GET /api/health` reports the active `variant`
+  and a `gpu` boolean. Whether a VM sees the GPU depends entirely on the
+  hypervisor: **WSL2 passes an NVIDIA GPU through, VirtualBox does not.**
+- **LLVM runtime — only on machines with no CUDA GPU.** Dr.Jit's CPU backend
+  `dlopen`s a system `libLLVM`; it is *not* bundled in the wheel, and a clean
+  Ubuntu image frequently has none. Without it the backend cannot start at all:
+  `sudo apt install llvm-runtime`. `setup.sh` probes for this and tells you.
+- **Linux x86-64 needs glibc 2.28+** (Ubuntu 20.04 and newer) for the Mitsuba
+  wheel; arm64 needs 2.17+. Ubuntu 18.04 is too old to install at all.
 - **Python 3.11+**.
 - **Node.js 20+** — optional. If the machine has no Node, or one older than 20
   (Ubuntu 24.04's `apt install nodejs` still ships 18), `setup.sh` downloads a
@@ -171,6 +185,46 @@ SRTS_PYTHON=/path/to/venv/bin/python ./run.sh
 SRTS_BACKEND_PORT=8011 ./run.sh
 SRTS_NODE_INSTALL=off ./setup.sh
 ```
+
+### Windows (WSL2)
+
+There is no native Windows path — `setup.sh` / `run.sh` are bash and expect
+`.venv/bin/`, not `.venv/Scripts/`. Run the project inside **WSL2**, which is
+also the only Windows option that gives the guest a real GPU: unlike VirtualBox,
+WSL2 passes an NVIDIA card straight through, so you get genuine CUDA ray tracing
+rather than the CPU fallback.
+
+```powershell
+wsl --install -d Ubuntu     # in an admin PowerShell, then reboot
+```
+
+Then, **in Windows** (not inside WSL), install the normal NVIDIA display driver.
+That is the whole GPU setup — the driver exposes CUDA to the guest through
+`/usr/lib/wsl/lib`, and no CUDA toolkit is needed.
+
+> **Do not install a Linux NVIDIA driver inside WSL.** It overwrites the
+> passthrough stubs and breaks GPU access. This is the most common way to end up
+> with a WSL2 box that cannot see the card.
+
+Inside the Ubuntu shell, confirm the GPU is visible, then set up as usual:
+
+```bash
+nvidia-smi                  # should list your card; if not, fix that first
+git clone https://github.com/puloktarafder/SionnaRTStudio.git
+cd SionnaRTStudio
+./setup.sh && ./run.sh
+```
+
+Open **http://localhost:3000** in the Windows browser — WSL2 forwards localhost
+automatically, so no port configuration is needed.
+
+Two things worth knowing:
+
+- **Keep the checkout on the Linux filesystem** (`~/…`, not `/mnt/c/…`). Vite's
+  file watching and npm installs are dramatically slower across the `/mnt/c`
+  boundary.
+- **No NVIDIA GPU?** WSL2 still works; it just runs the CPU variant, so install
+  the LLVM runtime first: `sudo apt install llvm-runtime`.
 
 ### How Node is resolved
 
@@ -360,12 +414,35 @@ Confirm it is up and check which port it took: `curl localhost:8000/api/health`.
 If something else already holds 8000, restart with `SRTS_BACKEND_PORT=8011
 ./run.sh` — the Vite proxy reads the same variable, so the frontend follows.
 
-**Solves are slow, and `/api/health` reports `"gpu": false`.** The backend pins
-Mitsuba's `cuda_ad_mono_polarized` variant only when it is actually available,
-so with no CUDA build it starts normally and silently falls back to a CPU
-variant rather than failing. Check the reported `variant`: anything not
-starting with `cuda` means rays are being traced on the CPU. Reinstall
-`mitsuba` against a working CUDA toolkit.
+**WSL2: `/api/health` reports `"gpu": false` even though the machine has an
+NVIDIA card.** Run `nvidia-smi` inside the WSL shell. If it fails there but
+works in Windows, the passthrough is broken — almost always because a Linux
+NVIDIA driver was installed inside WSL, which overwrites the stub libraries in
+`/usr/lib/wsl/lib`. Only the Windows-side driver should ever be installed.
+Failing that, `wsl --update` and restart with `wsl --shutdown`.
+
+**Backend refuses to start: "No usable Mitsuba variant".** The machine has no
+CUDA GPU *and* no LLVM runtime for the CPU fallback, so there is nothing to
+trace rays with. `sudo apt install llvm-runtime` (Dr.Jit loads `libLLVM` from
+the system; it is not part of the wheel), or set `DRJIT_LIBLLVM_PATH` to an
+existing one. This is the usual state of a freshly installed Ubuntu VM.
+
+**The web UI loads but the badge stays `RT-CORE OFFLINE`.** Vite and the backend
+are separate processes — `run.sh` starts uvicorn in the background and the
+frontend in the foreground, so the page serves fine even when the backend died
+on startup. Look at the `run.sh` output for a Python traceback, or hit
+`curl localhost:8000/api/health` directly to see the real error. Nothing about a
+blank badge is a frontend problem.
+
+**Solves are slow, and `/api/health` reports `"gpu": false`.** Rays are being
+traced on the CPU. Startup prefers `cuda_ad_mono_polarized` and falls back to
+`llvm_ad_mono_polarized` whenever CUDA cannot initialize, logging
+`[startup] WARNING: no CUDA GPU`. Results are identical either way — only the
+speed differs. Common causes: running inside a VM (VirtualBox and friends give
+the guest no access to the host GPU without passthrough, so this is expected and
+unavoidable there), no NVIDIA card, or a driver/library mismatch — check whether
+`nvidia-smi` runs at all, and reinstall `mitsuba` against a working CUDA toolkit
+if it does.
 
 **Rays pass straight through buildings.** Almost always a missing
 `mapbox_earcut` — trimesh cannot triangulate the footprints, so buildings never
