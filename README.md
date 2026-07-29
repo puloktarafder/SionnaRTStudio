@@ -29,10 +29,12 @@ browser.
 
 ## Table of contents
 
-- [Features](#features)
-- [Architecture](#architecture)
 - [Requirements](#requirements)
 - [Quick start](#quick-start)
+  - [Windows (WSL2)](#windows-wsl2)
+  - [How Node is resolved](#how-node-is-resolved)
+- [Features](#features)
+- [Architecture](#architecture)
 - [Using it](#using-it)
 - [Channel-response exports (CIR / CFR)](#channel-response-exports-cir--cfr)
 - [Standalone Sionna RT scene export](#standalone-sionna-rt-scene-export)
@@ -41,102 +43,6 @@ browser.
 - [Troubleshooting](#troubleshooting)
 - [Notes](#notes)
 - [License](#license)
-
-## Features
-
-- **GIS digital twin** — fetch building footprints, roads, parks, and water for any
-  bounding box via the OpenStreetMap Overpass API; rendered as an interactive
-  Three.js 3D scene with ITU radio materials per building.
-- **Link analysis** — GPU ray tracing between any Tx/Rx pair: multipath rays in 3D,
-  CIR taps, RX power, RMS delay spread, LOS/NLOS. Supports multiple transmitters
-  and receivers with an all-pairs link matrix.
-- **Beamforming** — configurable antenna array size, pattern (isotropic, dipole,
-  half-wave dipole, 3GPP TR 38.901), polarization (V / H / VH / cross), and
-  azimuth/elevation beamsteering that the solver genuinely applies.
-- **Ray interaction control** — toggle line-of-sight, specular reflection, diffuse
-  reflection, refraction, diffraction, and edge diffraction per solve
-  (applies to links, mobility, and radio maps alike). PathSolver samples/source
-  and seed are explicit, separately from radio-map Monte Carlo controls.
-- **Radio coverage maps** — Sionna `RadioMapSolver` with best-server combining
-  across transmitters; viridis/plasma/inferno/turbo colormaps with auto or
-  manual vmin/vmax range. Monte Carlo rays/Tx and a deterministic seed are
-  explicit controls and are returned with each grid for reproducibility.
-- **Mobility (multi-transmitter)** — draw a receiver trajectory in the 3D scene (or
-  generate a loop), then ray-trace **every transmitter** to each sampled position
-  on the GPU (all Tx × all waypoints batched into one `PathSolver` dispatch). The
-  API returns execution telemetry, and the UI visibly warns if the defensive serial
-  fallback was used. Play it back: the receiver moves along the path while the rays
-  from every transmitter, RX power, Doppler, delay spread, and LOS status update at
-  every step, with a step scrubber and looping playback. A per-run **Best-server / Sum
-  power** toggle picks how the multiple transmitters collapse into each step's KPIs:
-  - **Best-server** — the single strongest Tx supplies the metrics and is highlighted
-    as the serving cell, so you can inspect instantaneous **serving-cell
-    transitions** as the receiver moves (no hysteresis or time-to-trigger is
-    implied).
-  - **Sum power** — non-coherently sums incident powers. It does not merge
-    cross-transmitter delays/phases or invent a joint delay spread without an
-    inter-cell synchronization model; per-Tx delay spreads remain available.
-
-  Either way the scene renders the union of every transmitter's rays, and a per-Tx RSS
-  / LOS breakdown is shown for each waypoint. Add transmitters right in the Trajectory
-  panel; all Tx share one antenna array (matching `antennaArraySize` required).
-- **A3 handover analysis** — on top of the instantaneous best-server association,
-  the mobility solve runs the 3GPP A3 event model (hysteresis + time-to-trigger,
-  honored in seconds via waypoint spacing and speed) over the per-Tx RSS series:
-  serving-cell series, handover events (clickable — they jump the playback),
-  ping-pong count, and the hysteresis-free switch count as the baseline.
-- **Link-level KPIs (Shannon)** — one click re-traces the active link, samples
-  `paths.cfr()` on a configurable OFDM grid and reduces it to capacity KPIs:
-  open-loop vs MRT vs the steered uniform beam actually applied (their gap is the
-  measured beamforming gain), spectral efficiency and throughput, transmit-covariance
-  effective rank / condition number, coherence bandwidth, and a link-budget
-  effective SNR. Pure NumPy on the backend — no PHY package needed.
-- **PHY BER/BLER (optional)** — with the optional Sionna PHY package installed
-  (`pip install -r backend/requirements-phy.txt`), the ray-traced channel is
-  replayed through the standard-compliant 5G NR PUSCH chain (LDPC transport
-  blocks, QAM, DMRS-based estimation, LMMSE) as the reciprocal uplink, sweeping
-  Eb/N0 to a BER/BLER waterfall — as a background job with live progress. The
-  PHY runs CPU-pinned so the GPU stays exclusive to the ray tracer.
-- **CIR / CFR export** — re-run `PathSolver` for the active link or every Tx/Rx
-  in one scene dispatch. Download raw `a, tau = paths.cir()` without an OFDM
-  grid, or include `h = paths.cfr()` over configurable subcarriers. Multi-device
-  NPZ files preserve Sionna's full receiver/antenna/transmitter tensor axes.
-- **Standalone Sionna RT scene export** — download the exact Mitsuba scene the
-  backend ray-traces (`scene.xml` with ITU radio-material BSDFs plus one `.ply`
-  per building) alongside a generated `load_scene.py` that replays everything
-  Sionna keeps in Python rather than in the XML: carrier frequency, material
-  overrides, the `PlanarArray` config, every Tx/Rx, and the `PathSolver`
-  switches. Run it in a plain notebook to reproduce a solve with no app in the
-  loop.
-- **Project save / restore** — editable scene state autosaves in the browser. A
-  versioned project JSON can also be exported and imported to move the complete
-  geometry, Tx/Rx and antenna settings, solver/material controls, trajectory,
-  coverage controls, and display choices between runs or computers. Computed
-  rays and maps are deliberately regenerated after loading.
-- **Scene & dataset export** — GeoJSON / Wavefront OBJ / propagation CSV scene exports,
-  plus two clearly separated channel-grid paths: a coverage-derived JSON proxy
-  whose `H` is synthesized from map power, and a backend `.npz` containing
-  ray-traced per-cell MIMO CFR from `paths.cfr()` with the active Tx and Rx
-  array-port axes. This is not a standardized third-party scenario package.
-
-## Architecture
-
-```
-┌────────────────────────────┐         ┌──────────────────────────────┐
-│  Frontend (port 3000)      │  /api   │  Backend (port 8000)         │
-│  React + Three.js + Vite   │ ──────► │  FastAPI + Sionna RT         │
-│  src/                      │  proxy  │  backend/                    │
-│  • 3D scene & map UI       │         │  • Mitsuba scene from OSM    │
-│  • playback & charts       │         │    footprints (ENU meters)   │
-│  • exporters (CIR/CFR…)    │         │  • PathSolver / RadioMap-    │
-│                            │         │    Solver on CUDA            │
-└────────────────────────────┘         └──────────────────────────────┘
-```
-
-The backend builds a Sionna/Mitsuba scene from the same ENU building footprints
-the frontend renders (cached by geometry hash). The API therefore needs no
-geodetic reprojection; the renderer maps ENU values into Three.js as
-`(X, Y, Z) = (east, up, -north)`.
 
 ## Requirements
 
@@ -239,6 +145,102 @@ project-local install wins without touching anything outside this folder:
 
 `.node/` is gitignored and adds ~200 MB. Delete it to fall back to the system
 Node, or to force a re-download on the next `setup.sh`.
+
+## Features
+
+- **GIS digital twin** — fetch building footprints, roads, parks, and water for any
+  bounding box via the OpenStreetMap Overpass API; rendered as an interactive
+  Three.js 3D scene with ITU radio materials per building.
+- **Link analysis** — GPU ray tracing between any Tx/Rx pair: multipath rays in 3D,
+  CIR taps, RX power, RMS delay spread, LOS/NLOS. Supports multiple transmitters
+  and receivers with an all-pairs link matrix.
+- **Beamforming** — configurable antenna array size, pattern (isotropic, dipole,
+  half-wave dipole, 3GPP TR 38.901), polarization (V / H / VH / cross), and
+  azimuth/elevation beamsteering that the solver genuinely applies.
+- **Ray interaction control** — toggle line-of-sight, specular reflection, diffuse
+  reflection, refraction, diffraction, and edge diffraction per solve
+  (applies to links, mobility, and radio maps alike). PathSolver samples/source
+  and seed are explicit, separately from radio-map Monte Carlo controls.
+- **Radio coverage maps** — Sionna `RadioMapSolver` with best-server combining
+  across transmitters; viridis/plasma/inferno/turbo colormaps with auto or
+  manual vmin/vmax range. Monte Carlo rays/Tx and a deterministic seed are
+  explicit controls and are returned with each grid for reproducibility.
+- **Mobility (multi-transmitter)** — draw a receiver trajectory in the 3D scene (or
+  generate a loop), then ray-trace **every transmitter** to each sampled position
+  on the GPU (all Tx × all waypoints batched into one `PathSolver` dispatch). The
+  API returns execution telemetry, and the UI visibly warns if the defensive serial
+  fallback was used. Play it back: the receiver moves along the path while the rays
+  from every transmitter, RX power, Doppler, delay spread, and LOS status update at
+  every step, with a step scrubber and looping playback. A per-run **Best-server / Sum
+  power** toggle picks how the multiple transmitters collapse into each step's KPIs:
+  - **Best-server** — the single strongest Tx supplies the metrics and is highlighted
+    as the serving cell, so you can inspect instantaneous **serving-cell
+    transitions** as the receiver moves (no hysteresis or time-to-trigger is
+    implied).
+  - **Sum power** — non-coherently sums incident powers. It does not merge
+    cross-transmitter delays/phases or invent a joint delay spread without an
+    inter-cell synchronization model; per-Tx delay spreads remain available.
+
+  Either way the scene renders the union of every transmitter's rays, and a per-Tx RSS
+  / LOS breakdown is shown for each waypoint. Add transmitters right in the Trajectory
+  panel; all Tx share one antenna array (matching `antennaArraySize` required).
+- **A3 handover analysis** — on top of the instantaneous best-server association,
+  the mobility solve runs the 3GPP A3 event model (hysteresis + time-to-trigger,
+  honored in seconds via waypoint spacing and speed) over the per-Tx RSS series:
+  serving-cell series, handover events (clickable — they jump the playback),
+  ping-pong count, and the hysteresis-free switch count as the baseline.
+- **Link-level KPIs (Shannon)** — one click re-traces the active link, samples
+  `paths.cfr()` on a configurable OFDM grid and reduces it to capacity KPIs:
+  open-loop vs MRT vs the steered uniform beam actually applied (their gap is the
+  measured beamforming gain), spectral efficiency and throughput, transmit-covariance
+  effective rank / condition number, coherence bandwidth, and a link-budget
+  effective SNR. Pure NumPy on the backend — no PHY package needed.
+- **PHY BER/BLER (optional)** — with the optional Sionna PHY package installed
+  (`pip install -r backend/requirements-phy.txt`), the ray-traced channel is
+  replayed through the standard-compliant 5G NR PUSCH chain (LDPC transport
+  blocks, QAM, DMRS-based estimation, LMMSE) as the reciprocal uplink, sweeping
+  Eb/N0 to a BER/BLER waterfall — as a background job with live progress. The
+  PHY runs CPU-pinned so the GPU stays exclusive to the ray tracer.
+- **CIR / CFR export** — re-run `PathSolver` for the active link or every Tx/Rx
+  in one scene dispatch. Download raw `a, tau = paths.cir()` without an OFDM
+  grid, or include `h = paths.cfr()` over configurable subcarriers. Multi-device
+  NPZ files preserve Sionna's full receiver/antenna/transmitter tensor axes.
+- **Standalone Sionna RT scene export** — download the exact Mitsuba scene the
+  backend ray-traces (`scene.xml` with ITU radio-material BSDFs plus one `.ply`
+  per building) alongside a generated `load_scene.py` that replays everything
+  Sionna keeps in Python rather than in the XML: carrier frequency, material
+  overrides, the `PlanarArray` config, every Tx/Rx, and the `PathSolver`
+  switches. Run it in a plain notebook to reproduce a solve with no app in the
+  loop.
+- **Project save / restore** — editable scene state autosaves in the browser. A
+  versioned project JSON can also be exported and imported to move the complete
+  geometry, Tx/Rx and antenna settings, solver/material controls, trajectory,
+  coverage controls, and display choices between runs or computers. Computed
+  rays and maps are deliberately regenerated after loading.
+- **Scene & dataset export** — GeoJSON / Wavefront OBJ / propagation CSV scene exports,
+  plus two clearly separated channel-grid paths: a coverage-derived JSON proxy
+  whose `H` is synthesized from map power, and a backend `.npz` containing
+  ray-traced per-cell MIMO CFR from `paths.cfr()` with the active Tx and Rx
+  array-port axes. This is not a standardized third-party scenario package.
+
+## Architecture
+
+```
+┌────────────────────────────┐         ┌──────────────────────────────┐
+│  Frontend (port 3000)      │  /api   │  Backend (port 8000)         │
+│  React + Three.js + Vite   │ ──────► │  FastAPI + Sionna RT         │
+│  src/                      │  proxy  │  backend/                    │
+│  • 3D scene & map UI       │         │  • Mitsuba scene from OSM    │
+│  • playback & charts       │         │    footprints (ENU meters)   │
+│  • exporters (CIR/CFR…)    │         │  • PathSolver / RadioMap-    │
+│                            │         │    Solver on CUDA            │
+└────────────────────────────┘         └──────────────────────────────┘
+```
+
+The backend builds a Sionna/Mitsuba scene from the same ENU building footprints
+the frontend renders (cached by geometry hash). The API therefore needs no
+geodetic reprojection; the renderer maps ENU values into Three.js as
+`(X, Y, Z) = (east, up, -north)`.
 
 ## Using it
 
