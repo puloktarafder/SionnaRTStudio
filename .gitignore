@@ -12,3 +12,6 @@ coverage/
 
 # Generated OSM scene snapshots.
 artifacts/osm-scene/
+
+# Manuscript working directory (not part of the tool release).
+cleaned_manuscript/
