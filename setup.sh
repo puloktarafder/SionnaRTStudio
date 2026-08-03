@@ -16,8 +16,46 @@
 set -euo pipefail
 cd "$(dirname "$0")"            # always operate from the project folder
 
-# ── Prerequisite checks ──────────────────────────────────────────────────────
-command -v python3 >/dev/null 2>&1 || { echo "✗ python3 not found. Install Python 3.11+ and re-run."; exit 1; }
+# WSL1 emulates Linux syscalls instead of running a kernel, and Dr.Jit's native
+# extension does not load there. WSL2 carries "WSL2" in its kernel release.
+on_wsl1() {
+  grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null || return 1
+  ! grep -qi wsl2 /proc/sys/kernel/osrelease 2>/dev/null
+}
+
+wsl1_note() {
+  echo "  This is WSL1, which cannot load Dr.Jit or Mitsuba. Switch the distro"
+  echo "  to WSL2 from PowerShell, then re-run ./setup.sh:"
+  echo "      wsl --set-default-version 2"
+  echo "      wsl --set-version <distro> 2      # e.g. Ubuntu-24.04"
+}
+
+# ── Backend interpreter ──────────────────────────────────────────────────────
+# Every pinned wheel covers CPython 3.9-3.14 except numpy 2.2.6, which stops at
+# 3.13. On a distro whose default python3 runs past that ceiling (Ubuntu 26.04
+# ships 3.14) pip falls back to compiling numpy from source and dies on a
+# machine with no C toolchain. So pick an interpreter the wheels actually cover
+# instead of trusting `python3`, and be explicit when none exists.
+PY_MIN_MINOR=11          # oldest interpreter this project supports
+PY_WHEEL_MAX_MINOR=13    # newest interpreter the pinned wheel set covers
+
+py_minor() { "$1" -c 'import sys; print(sys.version_info[1])' 2>/dev/null; }
+
+VENV_PY=""
+for cand in python3.13 python3.12 python3.11 python3; do
+  command -v "$cand" >/dev/null 2>&1 || continue
+  minor="$(py_minor "$cand")" || continue
+  [ -n "$minor" ] || continue
+  [ "$minor" -ge "$PY_MIN_MINOR" ] || continue
+  VENV_PY="$cand"
+  [ "$minor" -le "$PY_WHEEL_MAX_MINOR" ] && break
+done
+
+if [ -z "$VENV_PY" ]; then
+  echo "✗ No Python 3.${PY_MIN_MINOR}+ found. Install one and re-run."
+  exit 1
+fi
+VENV_PY_MINOR="$(py_minor "$VENV_PY")"
 
 # ── Node.js ──────────────────────────────────────────────────────────────────
 # Vite 6 and tsx need Node 20+, and distro packages lag behind that (Ubuntu
@@ -148,14 +186,32 @@ else
     echo "Existing ./.venv is unusable on this machine — rebuilding it."
     rm -rf .venv
   fi
-  echo "Creating local ./.venv and installing backend/requirements.txt ..."
+  echo "Creating local ./.venv with $("$VENV_PY" -V 2>&1) and installing"
+  echo "backend/requirements.txt ..."
   echo "(Pulls Sionna/Mitsuba/Dr.Jit — needs an NVIDIA GPU + CUDA at RUN time.)"
-  python3 -m venv .venv || {
-    echo "✗ Could not create a venv. On Debian/Ubuntu:  sudo apt install python3-venv"
+  if [ "$VENV_PY_MINOR" -gt "$PY_WHEEL_MAX_MINOR" ]; then
+    echo "⚠ This is newer than the pinned wheel set (3.${PY_WHEEL_MAX_MINOR} is the"
+    echo "  ceiling), so numpy resolves to a newer release than the pinned 2.2.6."
+    echo "  Install any Python 3.${PY_MIN_MINOR}-3.${PY_WHEEL_MAX_MINOR} alongside it, with the matching"
+    echo "  -venv package, to reproduce the exact benchmarked environment."
+  fi
+  "$VENV_PY" -m venv .venv || {
+    echo "✗ Could not create a venv with $VENV_PY."
+    echo "  On Debian/Ubuntu the venv module is packaged separately, and a fresh"
+    echo "  image needs an index refresh before the package resolves:"
+    echo "      sudo apt update && sudo apt install python3-venv"
+    echo "  Or the version-specific one:  python3.${VENV_PY_MINOR}-venv"
     exit 1
   }
   ./.venv/bin/pip install --upgrade pip
-  ./.venv/bin/pip install -r backend/requirements.txt
+  if ! ./.venv/bin/pip install -r backend/requirements.txt; then
+    echo
+    echo "✗ Installing the backend requirements failed."
+    echo "  If pip fell back to building a package from source, no prebuilt wheel"
+    echo "  exists for Python 3.${VENV_PY_MINOR}. Install a Python 3.${PY_MIN_MINOR}-3.${PY_WHEEL_MAX_MINOR} and re-run,"
+    echo "  or give this machine a compiler:  sudo apt install build-essential"
+    exit 1
+  fi
 fi
 
 echo
@@ -164,7 +220,9 @@ echo "── Ray-tracing backend check ─────────────�
 # backend can serve at all. Resolve it now, while we can still explain the fix,
 # rather than letting the user discover it as an offline badge in the browser.
 SRTS_PY="${SRTS_PYTHON:-./.venv/bin/python}"
-RT_STATUS="$("$SRTS_PY" - <<'PY' 2>/dev/null || echo "error"
+RT_ERR="$(mktemp)"
+trap 'rm -f "$RT_ERR"' EXIT
+RT_STATUS="$("$SRTS_PY" - 2>"$RT_ERR" <<'PY' || echo "error"
 import mitsuba as mi
 for name, label in (("cuda_ad_mono_polarized", "gpu"), ("llvm_ad_mono_polarized", "cpu")):
     if name not in mi.variants():
@@ -185,12 +243,31 @@ case "$RT_STATUS" in
         echo "  Correct results, much slower. Expected inside a VM: VirtualBox"
         echo "  and friends cannot pass the host GPU through to the guest." ;;
   none) echo "✗ Neither GPU nor CPU ray tracing can start on this machine."
-        echo "  Dr.Jit's CPU path needs the LLVM runtime, which is not bundled"
-        echo "  in the wheel and is missing from many clean Ubuntu images:"
-        echo "      sudo apt install llvm-runtime"
-        echo "  Then re-run ./setup.sh. Without it the backend will not start." ;;
-  *)    echo "⚠ Could not probe Mitsuba variants; skipping this check." ;;
+        if on_wsl1; then
+          wsl1_note
+        else
+          echo "  Dr.Jit's CPU path needs the LLVM runtime, which is not bundled"
+          echo "  in the wheel and is missing from many clean Ubuntu images:"
+          echo "      sudo apt install llvm-runtime"
+          echo "  Then re-run ./setup.sh. Without it the backend will not start."
+        fi ;;
+  *)    echo "✗ Mitsuba could not be imported, so the backend will not start."
+        if [ -s "$RT_ERR" ]; then
+          tail -n 3 "$RT_ERR" | sed 's/^/    /'
+        else
+          echo "    (no output — the interpreter crashed during import)"
+        fi
+        if on_wsl1; then
+          wsl1_note
+        else
+          echo "  Check that the wheel matches this platform. Linux x86-64 needs"
+          echo "  glibc 2.28+, and there is no Mitsuba wheel for Intel macOS."
+        fi ;;
 esac
 
 echo
-echo "✅ Setup complete.  Start everything with:   ./run.sh    (or: npm start)"
+case "$RT_STATUS" in
+  gpu|cpu) echo "✅ Setup complete.  Start everything with:   ./run.sh    (or: npm start)" ;;
+  *)       echo "⚠ Setup finished, but ray tracing cannot start yet. Fix the above"
+           echo "  first — ./run.sh will refuse to launch the backend until then." ;;
+esac

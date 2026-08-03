@@ -62,7 +62,16 @@ browser.
   `sudo apt install llvm-runtime`. `setup.sh` probes for this and tells you.
 - **Linux x86-64 needs glibc 2.28+** (Ubuntu 20.04 and newer) for the Mitsuba
   wheel; arm64 needs 2.17+. Ubuntu 18.04 is too old to install at all.
-- **Python 3.11+**.
+- **Python 3.11–3.13**, and 3.14 works with one caveat. Every pinned wheel
+  covers 3.9–3.14 except `numpy==2.2.6`, whose wheels stop at 3.13, so on a 3.14
+  interpreter the requirements resolve numpy to 2.3.2+ instead. `setup.sh` picks
+  the newest interpreter within the pinned range when the machine has one, and
+  says so when it has to go above it. This matters on Ubuntu 26.04, whose
+  default `python3` is 3.14.
+- **`python3-venv`** is a separate Debian/Ubuntu package and is absent from
+  fresh images, including WSL ones: `sudo apt update && sudo apt install
+  python3-venv`. The `apt update` is not optional on a fresh image, or the
+  package appears to have "no installation candidate".
 - **Node.js 20+** — optional. If the machine has no Node, or one older than 20
   (Ubuntu 24.04's `apt install nodejs` still ships 18), `setup.sh` downloads a
   pinned Node into `./.node` automatically. No sudo, no system packages.
@@ -102,7 +111,24 @@ rather than the CPU fallback.
 
 ```powershell
 wsl --install -d Ubuntu     # in an admin PowerShell, then reboot
+wsl -l -v                   # the VERSION column must read 2
 ```
+
+> **WSL1 cannot run this project.** WSL1 translates Linux syscalls onto the NT
+> kernel instead of running a real one, and Dr.Jit's native extension does not
+> load there. The failure is confusing rather than obvious: `pip` installs every
+> requirement successfully, then `import sionna` dies inside the native library.
+> If `wsl -l -v` shows version 1, convert the distro and re-run `./setup.sh`:
+>
+> ```powershell
+> wsl --set-default-version 2          # for distros installed later
+> wsl --set-version Ubuntu-24.04 2     # for one already installed
+> ```
+>
+> If `--set-version 2` fails, Windows itself lacks hardware virtualization. On a
+> physical machine, enable Virtual Machine Platform and VT-x/AMD-V in firmware.
+> When Windows is a VirtualBox guest, the host must expose nested virtualization
+> (`VBoxManage modifyvm <vm> --nested-hw-virt on`).
 
 Then, **in Windows** (not inside WSL), install the normal NVIDIA display driver.
 That is the whole GPU setup — the driver exposes CUDA to the guest through
@@ -129,6 +155,10 @@ Two things worth knowing:
 - **Keep the checkout on the Linux filesystem** (`~/…`, not `/mnt/c/…`). Vite's
   file watching and npm installs are dramatically slower across the `/mnt/c`
   boundary.
+- **A fresh WSL Ubuntu image ships no `python3-venv`**, so `setup.sh` cannot
+  build `./.venv` until you run `sudo apt update && sudo apt install
+  python3-venv`. On Ubuntu 24.04 the plain `python3-venv` package only resolves
+  after `apt update`.
 - **No NVIDIA GPU?** WSL2 still works; it just runs the CPU variant, so install
   the LLVM runtime first: `sudo apt install llvm-runtime`.
 
@@ -422,6 +452,26 @@ works in Windows, the passthrough is broken — almost always because a Linux
 NVIDIA driver was installed inside WSL, which overwrites the stub libraries in
 `/usr/lib/wsl/lib`. Only the Windows-side driver should ever be installed.
 Failing that, `wsl --update` and restart with `wsl --shutdown`.
+
+**`run.sh` says the Python cannot import sionna/fastapi, but `pip` reports
+everything already satisfied.** The packages really are installed. `import
+sionna` loads Dr.Jit's native extension, so the import fails for a reason that
+has nothing to do with the package set. Read the traceback `run.sh` prints. Two
+causes account for nearly all of these: the distro is WSL1 rather than WSL2
+(check `wsl -l -v` in PowerShell, see [Windows (WSL2)](#windows-wsl2)), or the
+LLVM runtime is missing on a machine with no CUDA GPU (`sudo apt install
+llvm-runtime`). A `setup.sh` run that ended in "Mitsuba could not be imported"
+rather than a variant line points at the same problem.
+
+**`setup.sh` fails installing numpy with "Unknown compiler(s)" or "Preparing
+metadata (pyproject.toml) did not run successfully".** pip found no prebuilt
+wheel for this interpreter and fell back to compiling from source, which needs a
+C toolchain the machine does not have. The usual cause is a Python newer than
+the pinned wheel set, such as Ubuntu 26.04's default 3.14 against
+`numpy==2.2.6`. Install a Python 3.11–3.13 with its matching `-venv` package and
+re-run `setup.sh`, which prefers it automatically. Adding a compiler
+(`sudo apt install build-essential`) also works but builds numpy from source for
+several minutes.
 
 **Backend refuses to start: "No usable Mitsuba variant".** The machine has no
 CUDA GPU *and* no LLVM runtime for the CPU fallback, so there is nothing to

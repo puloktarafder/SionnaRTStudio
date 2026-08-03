@@ -7,7 +7,13 @@ mapbox_earcut==2.0.0   # REQUIRED: trimesh polygon triangulation for building
                        # extrusion. Without it buildings silently fail to mesh
                        # and rays pass straight through them (no occlusion).
 shapely
-numpy==2.2.6
+# 2.2.6 is the version every reported benchmark was measured against. Its wheels
+# stop at CPython 3.13, so on a newer interpreter (Ubuntu 26.04 defaults to 3.14)
+# pip would try to compile it from source and fail without a C toolchain. 2.3.2
+# is the oldest release carrying a cp314 wheel. sionna-rt only asks for
+# numpy>=1.26, so neither branch conflicts with it.
+numpy==2.2.6; python_version < "3.14"
+numpy>=2.3.2; python_version >= "3.14"
 fastapi>=0.110
 uvicorn[standard]>=0.29
 pydantic>=2.6

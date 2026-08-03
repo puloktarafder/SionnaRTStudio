@@ -10,6 +10,20 @@
 set -euo pipefail
 cd "$(dirname "$0")"            # always operate from the project folder
 
+# WSL1 emulates Linux syscalls instead of running a kernel, and Dr.Jit's native
+# extension does not load there. WSL2 carries "WSL2" in its kernel release.
+on_wsl1() {
+  grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null || return 1
+  ! grep -qi wsl2 /proc/sys/kernel/osrelease 2>/dev/null
+}
+
+wsl1_note() {
+  echo "  This is WSL1, which cannot load Dr.Jit or Mitsuba. Switch the distro"
+  echo "  to WSL2 from PowerShell, then re-run ./setup.sh:"
+  echo "      wsl --set-default-version 2"
+  echo "      wsl --set-version <distro> 2      # e.g. Ubuntu-24.04"
+}
+
 # ── Node: prefer the project-local one ./setup.sh may have installed ────────
 if [ -x ".node/bin/node" ]; then
   export PATH="$(pwd)/.node/bin:$PATH"
@@ -33,9 +47,32 @@ if [ -z "$PYTHON" ]; then
   fi
 fi
 
-if ! "$PYTHON" -c "import sionna, fastapi" >/dev/null 2>&1; then
-  echo "✗ This Python is missing sionna/fastapi: $PYTHON"
-  echo "  Run ./setup.sh, or:  $PYTHON -m pip install -r backend/requirements.txt"
+# `import sionna` loads Dr.Jit's native extension, so this import can fail on a
+# machine where pip reports every requirement satisfied. Keep the real error
+# rather than blaming the packages for what is a native-library problem.
+if ! IMPORT_ERR="$("$PYTHON" -c "import sionna, fastapi" 2>&1)"; then
+  echo "✗ The backend Python cannot import sionna/fastapi:"
+  echo "    $PYTHON"
+  echo
+  if [ -n "$IMPORT_ERR" ]; then
+    printf '%s\n' "$IMPORT_ERR" | tail -n 3 | sed 's/^/    /'
+  else
+    echo "    (no output — the interpreter crashed during import)"
+  fi
+  echo
+  case "$IMPORT_ERR" in
+    *"No module named 'sionna'"*|*"No module named 'fastapi'"*)
+      echo "  The packages are not installed. Run ./setup.sh, or:"
+      echo "      $PYTHON -m pip install -r backend/requirements.txt" ;;
+    *)
+      echo "  The packages are installed, but a native library failed to load."
+      if on_wsl1; then
+        wsl1_note
+      else
+        echo "  On a machine with no CUDA GPU this is usually the missing LLVM"
+        echo "  runtime that Dr.Jit dlopens:  sudo apt install llvm-runtime"
+      fi ;;
+  esac
   exit 1
 fi
 
