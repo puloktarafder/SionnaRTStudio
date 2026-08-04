@@ -142,6 +142,12 @@ Inside the Ubuntu shell, confirm the GPU is visible, then set up as usual:
 
 ```bash
 nvidia-smi                  # should list your card; if not, fix that first
+
+# A fresh WSL image has no python3-venv, and setup.sh cannot build ./.venv
+# without it. The index refresh is not optional on a new image — without it
+# apt reports "Package 'python3-venv' has no installation candidate".
+sudo apt update && sudo apt install -y python3-venv
+
 git clone https://github.com/puloktarafder/SionnaRTStudio.git
 cd SionnaRTStudio
 ./setup.sh && ./run.sh
@@ -155,10 +161,6 @@ Two things worth knowing:
 - **Keep the checkout on the Linux filesystem** (`~/…`, not `/mnt/c/…`). Vite's
   file watching and npm installs are dramatically slower across the `/mnt/c`
   boundary.
-- **A fresh WSL Ubuntu image ships no `python3-venv`**, so `setup.sh` cannot
-  build `./.venv` until you run `sudo apt update && sudo apt install
-  python3-venv`. On Ubuntu 24.04 the plain `python3-venv` package only resolves
-  after `apt update`.
 - **No NVIDIA GPU?** WSL2 still works; it just runs the CPU variant, so install
   the LLVM runtime first: `sudo apt install llvm-runtime`.
 
