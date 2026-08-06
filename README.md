@@ -42,6 +42,7 @@ browser.
 - [Running the tests](#running-the-tests)
 - [Troubleshooting](#troubleshooting)
 - [Notes](#notes)
+- [Citation](#citation)
 - [License](#license)
 
 ## Requirements
@@ -552,6 +553,10 @@ x86-64 and arm64; anywhere else it stops and asks you to install Node manually.
 - The radio map's per-cell **LOS flag** is a 2D-footprint geometric approximation
   (Sionna's `RadioMapSolver` returns path gain / RSS / SINR, not per-cell LOS), so
   treat it as a hint, not ground truth.
+
+## Citation
+
+Paper coming soon.
 
 ## License
 
