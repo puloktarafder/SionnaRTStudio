@@ -8,7 +8,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { GeoAnchor, Transmitter, Receiver } from '../types';
 import { RequestTimeoutError, withRequestTimeout } from '../utils';
-import { Search, MapPin, CloudDownload } from 'lucide-react';
+import { Search, MapPin, CloudDownload, RotateCcw } from 'lucide-react';
 
 interface MapSelectorProps {
   anchor: GeoAnchor;
@@ -20,6 +20,7 @@ interface MapSelectorProps {
   onTxUpdate: (tx: Transmitter) => void;
   onRxUpdate: (rx: Receiver) => void;
   onDownloadOSM: (bounds: L.LatLngBounds) => void;
+  onResetProject: () => void;
   isLoading: boolean;
   downloadProgress: string;
   trajectoryPoints: { lat: number; lon: number; enu: { x: number; y: number; z: number } }[];
@@ -53,6 +54,7 @@ export function MapSelector({
   onTxUpdate,
   onRxUpdate,
   onDownloadOSM,
+  onResetProject,
   isLoading,
   downloadProgress,
   trajectoryPoints
@@ -398,15 +400,30 @@ export function MapSelector({
           </span>
         </div>
 
-        <button
-          onClick={handleDownloadClick}
-          id="btn-trigger-gis-downloader"
-          disabled={isLoading}
-          className="w-full mt-2.5 btn-signal text-[14px] py-2.5 px-3 flex items-center justify-center gap-1.5 cursor-pointer"
-        >
-          <CloudDownload className="w-4 h-4" />
-          {isLoading ? 'Downloading Overpass...' : 'Fetch OSM Physical Twin'}
-        </button>
+        {/* Fetching a new twin is the destructive-feeling step people most often
+            want to undo, so the reset sits right beside it as well as in the
+            export panel. Both call the same handler, which confirms first. */}
+        <div className="flex items-stretch gap-2 mt-2.5">
+          <button
+            onClick={handleDownloadClick}
+            id="btn-trigger-gis-downloader"
+            disabled={isLoading}
+            className="flex-1 btn-signal text-[14px] py-2.5 px-3 flex items-center justify-center gap-1.5 cursor-pointer"
+          >
+            <CloudDownload className="w-4 h-4" />
+            {isLoading ? 'Downloading Overpass...' : 'Fetch OSM Physical Twin'}
+          </button>
+          <button
+            onClick={onResetProject}
+            id="btn-reset-project-map"
+            disabled={isLoading}
+            title="Discard the autosaved project and return the studio to its defaults"
+            className="shrink-0 bg-white hover:bg-red-50 hover:border-red-300 text-[#b4483c] text-[14px] font-bold py-2.5 px-3 rounded flex items-center justify-center gap-1.5 transition cursor-pointer border border-[var(--line)] disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <RotateCcw className="w-4 h-4" />
+            Reset
+          </button>
+        </div>
 
         {isLoading && (
           <div className="mt-2 p-2.5 bg-[#ebe7dc] text-[#cc785c] text-[12px] font-mono border border-[#e3e0d6] rounded flex flex-col gap-1.5 animate-pulse">

@@ -825,6 +825,7 @@ export default function App() {
             onTxUpdate={handleTxUpdate}
             onRxUpdate={handleRxUpdate}
             onDownloadOSM={handleDownloadOSM}
+            onResetProject={handleResetProject}
             isLoading={gisLoading}
             downloadProgress={downloadProgress}
             trajectoryPoints={trajectoryPoints}
