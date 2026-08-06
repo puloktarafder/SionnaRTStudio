@@ -504,8 +504,13 @@ export default function App() {
       const north = bounds.getNorth();
       const east = bounds.getEast();
 
+      // fetchOSMBuildings reports which mirror it is on; the local parse/compile
+      // message comes after the network is done, so a stalled mirror can never
+      // look like slow XML compilation again.
+      const loadedBuildings = await fetchOSMBuildings(
+        south, west, north, east, anchor, setDownloadProgress,
+      );
       setDownloadProgress('Compiling XML building shapes...');
-      const loadedBuildings = await fetchOSMBuildings(south, west, north, east, anchor);
 
       if (loadedBuildings.length === 0) {
         setDownloadProgress('No buildings found in this bounding extent, keeping preloaded coordinates.');

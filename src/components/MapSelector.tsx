@@ -7,6 +7,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { GeoAnchor, Transmitter, Receiver } from '../types';
+import { RequestTimeoutError, withRequestTimeout } from '../utils';
 import { Search, MapPin, CloudDownload } from 'lucide-react';
 
 interface MapSelectorProps {
@@ -288,10 +289,14 @@ export function MapSelector({
 
     setSearchError(null);
     try {
-      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}`);
-      if (!res.ok) throw new Error('Query error');
-
-      const data = await res.json();
+      const data = await withRequestTimeout(15_000, async (signal) => {
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}`,
+          { signal },
+        );
+        if (!res.ok) throw new Error('Query error');
+        return await res.json();
+      });
       if (data && data.length > 0) {
         const topResult = data[0];
         const lat = parseFloat(topResult.lat);
@@ -303,8 +308,12 @@ export function MapSelector({
       } else {
         setSearchError('Place not found. Try entering coordinate pairs (e.g. 51.5, -0.1)');
       }
-    } catch {
-      setSearchError('Search API error, please double check location inputs.');
+    } catch (error) {
+      setSearchError(
+        error instanceof RequestTimeoutError
+          ? 'Nominatim did not respond in 15s. Check your connection and retry.'
+          : 'Search API error, please double check location inputs.',
+      );
     }
   };
 

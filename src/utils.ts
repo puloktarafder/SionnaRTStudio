@@ -122,6 +122,46 @@ export function getBuildingAttributes(type: string, id: string): { height: numbe
   };
 }
 
+// ── Bounded network requests ─────────────────────────────────────────────────
+
+/** Thrown when a request outlives its budget, so callers can say "timed out"
+ *  rather than reporting a generic abort. */
+export class RequestTimeoutError extends Error {
+  constructor(public readonly timeoutMs: number) {
+    super(`timed out after ${Math.round(timeoutMs / 1000)}s`);
+    this.name = 'RequestTimeoutError';
+  }
+}
+
+/**
+ * Run a request under a deadline and abort it if the deadline passes.
+ *
+ * `run` receives the signal and is expected to pass it to `fetch` *and* to do
+ * its body read inside the callback. Both halves matter: a server can complete
+ * the response headers and then stall mid-body, and a timeout that only covers
+ * `fetch()` would hang forever on the `.json()`. Everything the callback awaits
+ * is inside the budget.
+ *
+ * Uses AbortController rather than `AbortSignal.timeout()` — the latter needs
+ * Safari 16+, and this is the one path a first-run Mac user hits.
+ */
+export async function withRequestTimeout<T>(
+  timeoutMs: number,
+  run: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await run(controller.signal);
+  } catch (error) {
+    // Distinguish "we gave up" from "the caller/page aborted us".
+    if (controller.signal.aborted) throw new RequestTimeoutError(timeoutMs);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ── Overpass API fetch & parsing ─────────────────────────────────────────────
 
 export interface OsmBounds {
@@ -135,10 +175,21 @@ export interface OverpassData {
   elements?: any[];
 }
 
+// Overpass mirrors, tried in order. Both serve the full planet — a regional
+// extract (e.g. overpass.osm.ch, Switzerland only) must never go in this list:
+// it answers 200 with an empty `elements` array outside its region, which reads
+// as "no buildings here" rather than as a failure.
+//
+// A mirror that accepts the connection and then goes silent is the failure mode
+// that matters, so every request below is bounded by OSM_FETCH_TIMEOUT_MS.
 export const OSM_OVERPASS_ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
+  'https://z.overpass-api.de/api/interpreter',
 ] as const;
+
+/** Per-mirror ceiling. Overpass runs the query under `[out:json][timeout:25]`,
+ *  so a healthy-but-busy server still fits; past this it is not coming back. */
+export const OSM_FETCH_TIMEOUT_MS = 30_000;
 
 interface OsmClassification {
   category: BuildingFootprint['category'];
@@ -240,26 +291,42 @@ out body;
 out skel qt;`;
 }
 
-export async function fetchOSMBuildings(south: number, west: number, north: number, east: number, anchor: GeoAnchor): Promise<BuildingFootprint[]> {
+export async function fetchOSMBuildings(
+  south: number,
+  west: number,
+  north: number,
+  east: number,
+  anchor: GeoAnchor,
+  onProgress?: (message: string) => void,
+): Promise<BuildingFootprint[]> {
   const bounds = { south, west, north, east };
   const query = buildOsmOverpassQuery(bounds);
 
   let lastError = 'no Overpass endpoint responded';
-  for (const endpoint of OSM_OVERPASS_ENDPOINTS) {
+  for (const [index, endpoint] of OSM_OVERPASS_ENDPOINTS.entries()) {
+    const host = new URL(endpoint).host;
+    onProgress?.(
+      `Querying Overpass (mirror ${index + 1} of ${OSM_OVERPASS_ENDPOINTS.length}: ${host})...`,
+    );
     try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-        body: new URLSearchParams({ data: query }),
+      // Timeout spans the body read too — a mirror can accept the POST and then
+      // never answer, which is what used to wedge the download indefinitely.
+      const data = await withRequestTimeout(OSM_FETCH_TIMEOUT_MS, async (signal) => {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+          body: new URLSearchParams({ data: query }),
+          signal,
+        });
+        if (!response.ok) {
+          throw new Error(`${response.status} ${response.statusText}`);
+        }
+        return await response.json() as OverpassData;
       });
-      if (!response.ok) {
-        lastError = `${endpoint}: ${response.status} ${response.statusText}`;
-        continue;
-      }
-      const data = await response.json() as OverpassData;
       return parseOsmElements(data, bounds, anchor);
     } catch (error) {
-      lastError = `${endpoint}: ${error instanceof Error ? error.message : String(error)}`;
+      lastError = `${host}: ${error instanceof Error ? error.message : String(error)}`;
+      onProgress?.(`Mirror ${host} failed (${lastError}); trying the next one...`);
     }
   }
   throw new Error(`Failed to fetch OSM data from configured Overpass mirrors (${lastError})`);

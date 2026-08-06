@@ -18,6 +18,15 @@ import {
   SolverOptions,
   Transmitter,
 } from './types';
+import { withRequestTimeout } from './utils';
+
+// Request budgets. A solve or export is genuinely slow (ray tracing, radio
+// maps, mobility batches), so its ceiling is generous — it exists to surface a
+// wedged backend as an error rather than a spinner that never stops. Health
+// checks and job polls answer promptly or not at all.
+const SOLVE_TIMEOUT_MS = 10 * 60_000;
+const HEALTH_TIMEOUT_MS = 5_000;
+const POLL_TIMEOUT_MS = 15_000;
 
 export interface SolveResponse {
   paths: PropagationPath[];
@@ -125,15 +134,18 @@ async function errorDetail(res: Response): Promise<string> {
 }
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+  return withRequestTimeout(SOLVE_TIMEOUT_MS, async (signal) => {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    });
+    if (!res.ok) {
+      throw new Error(await errorDetail(res));
+    }
+    return (await res.json()) as T;
   });
-  if (!res.ok) {
-    throw new Error(await errorDetail(res));
-  }
-  return (await res.json()) as T;
 }
 
 // POST JSON, return the response as a downloadable blob with the filename the
@@ -143,24 +155,29 @@ async function postForBlob(
   body: unknown,
   fallbackName: string,
 ): Promise<{ blob: Blob; filename: string }> {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+  return withRequestTimeout(SOLVE_TIMEOUT_MS, async (signal) => {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    });
+    if (!res.ok) {
+      throw new Error(await errorDetail(res));
+    }
+    const blob = await res.blob();
+    const cd = res.headers.get('Content-Disposition') || '';
+    const m = cd.match(/filename="?([^"]+)"?/);
+    return { blob, filename: m ? m[1] : fallbackName };
   });
-  if (!res.ok) {
-    throw new Error(await errorDetail(res));
-  }
-  const blob = await res.blob();
-  const cd = res.headers.get('Content-Disposition') || '';
-  const m = cd.match(/filename="?([^"]+)"?/);
-  return { blob, filename: m ? m[1] : fallbackName };
 }
 
 export async function checkBackend(): Promise<boolean> {
   try {
-    const res = await fetch('/api/health');
-    return res.ok;
+    return await withRequestTimeout(HEALTH_TIMEOUT_MS, async (signal) => {
+      const res = await fetch('/api/health', { signal });
+      return res.ok;
+    });
   } catch {
     return false;
   }
@@ -331,9 +348,11 @@ export interface PhyBerJobStatus {
 // Whether the backend has the optional Sionna PHY package installed.
 export async function checkPhyAvailable(): Promise<boolean> {
   try {
-    const res = await fetch('/api/health');
-    if (!res.ok) return false;
-    return Boolean((await res.json()).phy);
+    return await withRequestTimeout(HEALTH_TIMEOUT_MS, async (signal) => {
+      const res = await fetch('/api/health', { signal });
+      if (!res.ok) return false;
+      return Boolean((await res.json()).phy);
+    });
   } catch {
     return false;
   }
@@ -357,9 +376,11 @@ export function startPhyBerSweep(
 }
 
 export async function getPhyBerStatus(jobId: string): Promise<PhyBerJobStatus> {
-  const res = await fetch(`/api/phyber/${jobId}`);
-  if (!res.ok) throw new Error(await errorDetail(res));
-  return (await res.json()) as PhyBerJobStatus;
+  return withRequestTimeout(POLL_TIMEOUT_MS, async (signal) => {
+    const res = await fetch(`/api/phyber/${jobId}`, { signal });
+    if (!res.ok) throw new Error(await errorDetail(res));
+    return (await res.json()) as PhyBerJobStatus;
+  });
 }
 
 export type CIRFormat = 'npz' | 'cir_npz' | 'cir_csv' | 'cfr_csv';
