@@ -47,7 +47,7 @@ browser.
 
 ## Requirements
 
-- **Linux, or Windows via WSL2** — `setup.sh` and `run.sh` are bash scripts that
+- **Linux, macOS, and Windows via WSL2** — `setup.sh` and `run.sh` are bash scripts that
   assume a POSIX venv layout, so there is no native Windows (cmd/PowerShell)
   path. See [Windows (WSL2)](#windows-wsl2). macOS installs on Apple Silicon and
   runs CPU-only; Intel Macs have no Mitsuba wheel at all.
