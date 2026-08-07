@@ -27,6 +27,12 @@ Shannon-capacity link KPIs, an optional standard-compliant 5G NR PUSCH BER/BLER
 chain, and notebook-grade channel-response exports (CIR / CFR) — all from the
 browser.
 
+> **New to SionnaRTStudio?** Follow the
+> **[complete step-by-step tutorial](https://puloktarafder.github.io/posts/2026/08/sionnartstudio-tutorial/)**
+> for setup, interface navigation, ray-traced links, coverage maps, mobility
+> trajectories, analysis tools, research exports, and standalone Sionna RT
+> notebook workflows.
+
 ## Table of contents
 
 - [Requirements](#requirements)
