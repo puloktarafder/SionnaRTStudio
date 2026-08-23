@@ -13,6 +13,7 @@
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![CUDA GPU](https://img.shields.io/badge/CUDA-GPU%20required-76B900?logo=nvidia&logoColor=white)](https://developer.nvidia.com/cuda-toolkit)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22064926.svg)](https://doi.org/10.5281/zenodo.22064926)
 
 </div>
 
@@ -562,7 +563,13 @@ x86-64 and arm64; anywhere else it stops and asks you to install Node manually.
 
 ## Citation
 
-Paper coming soon.
+If you use SionnaRTStudio in research, cite the archived software release:
+
+> P. Tarafder, *SionnaRTStudio: A Browser-Based Wireless Digital Twin*,
+> version 1.0.0, Zenodo, 2026.
+> [doi:10.5281/zenodo.22064926](https://doi.org/10.5281/zenodo.22064926).
+
+Machine-readable citation metadata is available in [`CITATION.cff`](CITATION.cff).
 
 ## License
 

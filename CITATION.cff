@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use SionnaRTStudio in your research, please cite the software using the metadata below."
+title: "SionnaRTStudio: A Browser-Based Wireless Digital Twin"
+type: software
+authors:
+  - family-names: "Tarafder"
+    given-names: "Pulok"
+    affiliation: "Department of Electrical Engineering and Computer Science, Howard University"
+version: 1.0.0
+doi: "10.5281/zenodo.22064926"
+date-released: 2026-08-23
+license: Apache-2.0
+repository-code: "https://github.com/puloktarafder/SionnaRTStudio"
+url: "https://github.com/puloktarafder/SionnaRTStudio"
+abstract: >-
+  SionnaRTStudio is a browser-based wireless digital twin built on NVIDIA
+  Sionna RT, with an interactive React and Three.js frontend and a FastAPI
+  backend for ray-traced wireless propagation analysis.
+keywords:
+  - wireless digital twin
+  - ray tracing
+  - radio propagation
+  - Sionna RT
+  - Three.js
+  - FastAPI
