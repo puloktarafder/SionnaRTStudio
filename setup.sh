@@ -15,6 +15,7 @@
 #   SRTS_NODE_INSTALL=off       never auto-install; fail if Node is missing
 set -euo pipefail
 cd "$(dirname "$0")"            # always operate from the project folder
+source scripts/runtime-env.sh
 
 # WSL1 emulates Linux syscalls instead of running a kernel, and Dr.Jit's native
 # extension does not load there. WSL2 carries "WSL2" in its kernel release.
@@ -52,10 +53,38 @@ for cand in python3.13 python3.12 python3.11 python3; do
 done
 
 if [ -z "$VENV_PY" ]; then
-  echo "✗ No Python 3.${PY_MIN_MINOR}+ found. Install one and re-run."
+  if [ "$(uname -s)" = "Darwin" ]; then
+    echo "✗ No Python 3.${PY_MIN_MINOR}+ found. Run: brew install python@3.13"
+  else
+    echo "✗ No Python 3.${PY_MIN_MINOR}+ found. Install one and re-run."
+  fi
   exit 1
 fi
 VENV_PY_MINOR="$(py_minor "$VENV_PY")"
+
+# macOS has no CUDA path, so LLVM is required. Homebrew's LLVM formula is
+# keg-only; install it when absent and export its exact dylib path for Dr.Jit.
+if [ "$(uname -s)" = "Darwin" ]; then
+  if [ "$(uname -m)" != "arm64" ]; then
+    echo "✗ Intel macOS is unsupported: Mitsuba publishes macOS wheels for Apple Silicon only."
+    exit 1
+  fi
+  if ! command -v brew >/dev/null 2>&1; then
+    echo "✗ Homebrew is required on macOS. Install it from https://brew.sh, then re-run ./setup.sh."
+    exit 1
+  fi
+  if ! brew --prefix llvm >/dev/null 2>&1; then
+    echo "Installing LLVM with Homebrew (required by Dr.Jit's CPU backend) ..."
+    brew install llvm
+  fi
+  srts_configure_drjit_llvm
+  if [ -z "${DRJIT_LIBLLVM_PATH:-}" ]; then
+    echo "✗ Homebrew LLVM is installed, but lib/libLLVM.dylib was not found."
+    echo "  Check: brew --prefix llvm"
+    exit 1
+  fi
+  echo "▶ Dr.Jit LLVM : $DRJIT_LIBLLVM_PATH"
+fi
 
 # ── Node.js ──────────────────────────────────────────────────────────────────
 # Vite 6 and tsx need Node 20+, and distro packages lag behind that (Ubuntu
@@ -74,10 +103,10 @@ node_ok() {                     # node_ok <node-binary> — present and new enou
 }
 
 install_local_node() {
-  local plat arch pkg tmp
+  local plat arch pkg archive_ext archive tmp
   case "$(uname -s)" in
-    Linux)  plat=linux ;;
-    Darwin) plat=darwin ;;
+    Linux)  plat=linux;  archive_ext=tar.xz ;;
+    Darwin) plat=darwin; archive_ext=tar.gz ;;
     *) echo "✗ Auto-install covers Linux and macOS only. Install Node ${NODE_MIN_MAJOR}+ manually and re-run."; exit 1 ;;
   esac
   case "$(uname -m)" in
@@ -86,24 +115,32 @@ install_local_node() {
     *) echo "✗ No official Node build for $(uname -m). Install Node ${NODE_MIN_MAJOR}+ manually and re-run."; exit 1 ;;
   esac
   pkg="node-v${NODE_VERSION}-${plat}-${arch}"
+  archive="${pkg}.${archive_ext}"
 
   if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
-    echo "✗ Need curl or wget to download Node.  sudo apt install curl"; exit 1
+    if [ "$plat" = "darwin" ]; then
+      echo "✗ Need curl or wget to download Node. Install Xcode command-line tools."; exit 1
+    else
+      echo "✗ Need curl or wget to download Node.  sudo apt install curl"; exit 1
+    fi
   fi
-  if ! command -v tar >/dev/null 2>&1 || ! command -v xz >/dev/null 2>&1; then
+  if ! command -v tar >/dev/null 2>&1; then
+    echo "✗ Need tar to unpack Node."; exit 1
+  fi
+  if [ "$plat" = "linux" ] && ! command -v xz >/dev/null 2>&1; then
     echo "✗ Need tar and xz to unpack Node.  sudo apt install tar xz-utils"; exit 1
   fi
 
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
 
-  echo "Downloading ${pkg}.tar.xz from nodejs.org ..."
+  echo "Downloading ${archive} from nodejs.org ..."
   local base="https://nodejs.org/dist/v${NODE_VERSION}"
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL -o "$tmp/$pkg.tar.xz"    "$base/$pkg.tar.xz"
+    curl -fsSL -o "$tmp/$archive"       "$base/$archive"
     curl -fsSL -o "$tmp/SHASUMS256.txt" "$base/SHASUMS256.txt"
   else
-    wget -qO "$tmp/$pkg.tar.xz"    "$base/$pkg.tar.xz"
+    wget -qO "$tmp/$archive"       "$base/$archive"
     wget -qO "$tmp/SHASUMS256.txt" "$base/SHASUMS256.txt"
   fi
 
@@ -113,8 +150,8 @@ install_local_node() {
   elif command -v shasum    >/dev/null 2>&1; then sha="shasum -a 256"
   fi
   if [ -n "$sha" ]; then
-    if ! (cd "$tmp" && grep " ${pkg}.tar.xz\$" SHASUMS256.txt | $sha -c - >/dev/null 2>&1); then
-      echo "✗ Checksum mismatch on ${pkg}.tar.xz — refusing to install."; exit 1
+    if ! (cd "$tmp" && grep " ${archive}\$" SHASUMS256.txt | $sha -c - >/dev/null 2>&1); then
+      echo "✗ Checksum mismatch on ${archive} — refusing to install."; exit 1
     fi
     echo "Checksum verified."
   else
@@ -123,7 +160,7 @@ install_local_node() {
 
   rm -rf "$NODE_DIR"
   mkdir -p "$NODE_DIR"
-  tar -xf "$tmp/$pkg.tar.xz" -C "$NODE_DIR" --strip-components=1
+  tar -xf "$tmp/$archive" -C "$NODE_DIR" --strip-components=1
 }
 
 if node_ok "$NODE_DIR/bin/node"; then
@@ -188,7 +225,7 @@ else
   fi
   echo "Creating local ./.venv with $("$VENV_PY" -V 2>&1) and installing"
   echo "backend/requirements.txt ..."
-  echo "(Pulls Sionna/Mitsuba/Dr.Jit — needs an NVIDIA GPU + CUDA at RUN time.)"
+  echo "(Pulls Sionna/Mitsuba/Dr.Jit — uses CUDA when available, LLVM otherwise.)"
   if [ "$VENV_PY_MINOR" -gt "$PY_WHEEL_MAX_MINOR" ]; then
     echo "⚠ This is newer than the pinned wheel set (3.${PY_WHEEL_MAX_MINOR} is the"
     echo "  ceiling), so numpy resolves to a newer release than the pinned 2.2.6."
@@ -197,10 +234,14 @@ else
   fi
   "$VENV_PY" -m venv .venv || {
     echo "✗ Could not create a venv with $VENV_PY."
-    echo "  On Debian/Ubuntu the venv module is packaged separately, and a fresh"
-    echo "  image needs an index refresh before the package resolves:"
-    echo "      sudo apt update && sudo apt install python3-venv"
-    echo "  Or the version-specific one:  python3.${VENV_PY_MINOR}-venv"
+    if [ "$(uname -s)" = "Darwin" ]; then
+      echo "  Install a Homebrew Python 3.11-3.13 (brew install python@3.13), then re-run."
+    else
+      echo "  On Debian/Ubuntu the venv module is packaged separately, and a fresh"
+      echo "  image needs an index refresh before the package resolves:"
+      echo "      sudo apt update && sudo apt install python3-venv"
+      echo "  Or the version-specific one:  python3.${VENV_PY_MINOR}-venv"
+    fi
     exit 1
   }
   ./.venv/bin/pip install --upgrade pip
@@ -209,7 +250,11 @@ else
     echo "✗ Installing the backend requirements failed."
     echo "  If pip fell back to building a package from source, no prebuilt wheel"
     echo "  exists for Python 3.${VENV_PY_MINOR}. Install a Python 3.${PY_MIN_MINOR}-3.${PY_WHEEL_MAX_MINOR} and re-run,"
-    echo "  or give this machine a compiler:  sudo apt install build-essential"
+    if [ "$(uname -s)" = "Darwin" ]; then
+      echo "  or install Apple's command-line tools:  xcode-select --install"
+    else
+      echo "  or give this machine a compiler:  sudo apt install build-essential"
+    fi
     exit 1
   fi
 fi
@@ -245,6 +290,10 @@ case "$RT_STATUS" in
   none) echo "✗ Neither GPU nor CPU ray tracing can start on this machine."
         if on_wsl1; then
           wsl1_note
+        elif [ "$(uname -s)" = "Darwin" ]; then
+          echo "  Dr.Jit's CPU path needs Homebrew LLVM. Run:"
+          echo "      brew install llvm"
+          echo "  setup.sh will find its keg-only libLLVM.dylib automatically."
         else
           echo "  Dr.Jit's CPU path needs the LLVM runtime, which is not bundled"
           echo "  in the wheel and is missing from many clean Ubuntu images:"
@@ -259,9 +308,11 @@ case "$RT_STATUS" in
         fi
         if on_wsl1; then
           wsl1_note
+        elif [ "$(uname -s)" = "Darwin" ]; then
+          echo "  Apple Silicon requires Homebrew LLVM: brew install llvm"
+          echo "  setup.sh configures its libLLVM.dylib automatically."
         else
-          echo "  Check that the wheel matches this platform. Linux x86-64 needs"
-          echo "  glibc 2.28+, and there is no Mitsuba wheel for Intel macOS."
+          echo "  Check that the wheel matches this platform. Linux x86-64 needs glibc 2.28+."
         fi ;;
 esac
 

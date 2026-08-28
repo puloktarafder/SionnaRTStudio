@@ -9,6 +9,8 @@
 #   SRTS_PYTHON=/path/to/python ./run.sh
 set -euo pipefail
 cd "$(dirname "$0")"            # always operate from the project folder
+source scripts/runtime-env.sh
+srts_configure_drjit_llvm
 
 # WSL1 emulates Linux syscalls instead of running a kernel, and Dr.Jit's native
 # extension does not load there. WSL2 carries "WSL2" in its kernel release.
@@ -68,6 +70,9 @@ if ! IMPORT_ERR="$("$PYTHON" -c "import sionna, fastapi" 2>&1)"; then
       echo "  The packages are installed, but a native library failed to load."
       if on_wsl1; then
         wsl1_note
+      elif [ "$(uname -s)" = "Darwin" ]; then
+        echo "  Dr.Jit's CPU backend needs Homebrew LLVM. Run ./setup.sh; it"
+        echo "  installs LLVM when needed and configures libLLVM.dylib automatically."
       else
         echo "  On a machine with no CUDA GPU this is usually the missing LLVM"
         echo "  runtime that Dr.Jit dlopens:  sudo apt install llvm-runtime"

@@ -27,6 +27,12 @@ import time
 import traceback
 import zipfile
 
+# Homebrew LLVM is keg-only. Configure Dr.Jit before importing Mitsuba so
+# direct uvicorn launches work as reliably as setup.sh/run.sh on macOS.
+from .runtime_env import configure_drjit_llvm_path
+
+configure_drjit_llvm_path()
+
 import mitsuba as mi
 import numpy as np
 
@@ -61,15 +67,23 @@ for _candidate in (_GPU_VARIANT, _CPU_VARIANT):
         _failures.append(f"{_candidate}: {str(exc).strip().splitlines()[0]}")
         print(f"[startup] Mitsuba variant {_candidate!r} unavailable.")
 else:
-    # Dr.Jit's LLVM backend dlopen()s a system libLLVM; it is not bundled in the
-    # wheel, and a clean Ubuntu image often has no LLVM runtime at all. Say so,
-    # because the raw Dr.Jit message does not mention apt.
+    if platform.system() == "Darwin":
+        _llvm_help = (
+            "On Apple Silicon, install Homebrew LLVM with: brew install llvm\n"
+            "SionnaRTStudio auto-discovers its keg-only libLLVM.dylib; re-run "
+            "./setup.sh if it is still unavailable."
+        )
+    else:
+        _llvm_help = (
+            "With no NVIDIA GPU, the CPU path needs the LLVM runtime:\n"
+            "  sudo apt install llvm-runtime\n"
+            "or point Dr.Jit at an existing one with DRJIT_LIBLLVM_PATH."
+        )
     raise RuntimeError(
         "No usable Mitsuba variant — cannot ray-trace on this machine.\n"
         + "\n".join(f"  - {f}" for f in _failures)
-        + "\n\nWith no NVIDIA GPU, the CPU path needs the LLVM runtime:"
-        "\n  sudo apt install llvm-runtime"
-        "\nor point Dr.Jit at an existing one with DRJIT_LIBLLVM_PATH."
+        + "\n\n"
+        + _llvm_help
     )
 
 if not (mi.variant() or "").startswith("cuda"):

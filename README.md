@@ -65,9 +65,10 @@ browser.
   and a `gpu` boolean. Whether a VM sees the GPU depends entirely on the
   hypervisor: **WSL2 passes an NVIDIA GPU through, VirtualBox does not.**
 - **LLVM runtime — only on machines with no CUDA GPU.** Dr.Jit's CPU backend
-  `dlopen`s a system `libLLVM`; it is *not* bundled in the wheel, and a clean
-  Ubuntu image frequently has none. Without it the backend cannot start at all:
-  `sudo apt install llvm-runtime`. `setup.sh` probes for this and tells you.
+  `dlopen`s a system `libLLVM`; it is *not* bundled in the wheel. `setup.sh`
+  handles both supported platforms: Ubuntu uses `sudo apt install llvm-runtime`
+  when missing; on Apple Silicon it installs `brew install llvm` when needed
+  and automatically points Dr.Jit at Homebrew's keg-only `libLLVM.dylib`.
 - **Linux x86-64 needs glibc 2.28+** (Ubuntu 20.04 and newer) for the Mitsuba
   wheel; arm64 needs 2.17+. Ubuntu 18.04 is too old to install at all.
 - **Python 3.11–3.13**, and 3.14 works with one caveat. Every pinned wheel
@@ -102,6 +103,7 @@ Environment variables override the defaults:
 | `SRTS_BACKEND_PORT` | `8000` | Move the backend off port 8000 when something else holds it. Read by both `run.sh` and the Vite proxy, so the frontend follows automatically. |
 | `SRTS_NODE_VERSION` | `22.23.1` | Which Node to fetch when `setup.sh` installs one into `./.node`. |
 | `SRTS_NODE_INSTALL` | `auto` | Set to `off` to forbid the automatic Node download; `setup.sh` then fails if no Node 20+ is on `PATH`. |
+| `DRJIT_LIBLLVM_PATH` | auto-detected on macOS | Override path to LLVM shared library. Normally unnecessary; `setup.sh`, `run.sh`, and direct backend startup detect Homebrew LLVM. |
 
 ```bash
 SRTS_PYTHON=/path/to/venv/bin/python ./run.sh
@@ -469,9 +471,10 @@ sionna` loads Dr.Jit's native extension, so the import fails for a reason that
 has nothing to do with the package set. Read the traceback `run.sh` prints. Two
 causes account for nearly all of these: the distro is WSL1 rather than WSL2
 (check `wsl -l -v` in PowerShell, see [Windows (WSL2)](#windows-wsl2)), or the
-LLVM runtime is missing on a machine with no CUDA GPU (`sudo apt install
-llvm-runtime`). A `setup.sh` run that ended in "Mitsuba could not be imported"
-rather than a variant line points at the same problem.
+LLVM runtime is missing on a machine with no CUDA GPU (Ubuntu: `sudo apt install
+llvm-runtime`; macOS: `brew install llvm`). A `setup.sh` run that ended in
+"Mitsuba could not be imported" rather than a variant line points at the same
+problem.
 
 **`setup.sh` fails installing numpy with "Unknown compiler(s)" or "Preparing
 metadata (pyproject.toml) did not run successfully".** pip found no prebuilt
@@ -484,10 +487,11 @@ re-run `setup.sh`, which prefers it automatically. Adding a compiler
 several minutes.
 
 **Backend refuses to start: "No usable Mitsuba variant".** The machine has no
-CUDA GPU *and* no LLVM runtime for the CPU fallback, so there is nothing to
-trace rays with. `sudo apt install llvm-runtime` (Dr.Jit loads `libLLVM` from
-the system; it is not part of the wheel), or set `DRJIT_LIBLLVM_PATH` to an
-existing one. This is the usual state of a freshly installed Ubuntu VM.
+CUDA GPU *and* no LLVM runtime for the CPU fallback. On Ubuntu, run `sudo apt
+install llvm-runtime`. On Apple Silicon, re-run `./setup.sh`: it installs LLVM
+through Homebrew and resolves the keg-only `libLLVM.dylib` automatically. A
+manual override remains available: `DRJIT_LIBLLVM_PATH="$(brew --prefix
+llvm)/lib/libLLVM.dylib" ./run.sh`.
 
 **The web UI loads but the badge stays `RT-CORE OFFLINE`.** Vite and the backend
 are separate processes — `run.sh` starts uvicorn in the background and the
