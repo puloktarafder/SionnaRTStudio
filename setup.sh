@@ -73,8 +73,13 @@ if [ "$(uname -s)" = "Darwin" ]; then
     echo "✗ Homebrew is required on macOS. Install it from https://brew.sh, then re-run ./setup.sh."
     exit 1
   fi
-  if ! brew --prefix llvm >/dev/null 2>&1; then
+  # `brew --prefix llvm` prints the prospective opt path even when the formula
+  # is not installed, so it cannot be used as an installation check.
+  if [ -z "$(brew list --versions llvm 2>/dev/null)" ]; then
     echo "Installing LLVM with Homebrew (required by Dr.Jit's CPU backend) ..."
+    echo "NOTE: Homebrew may pause after listing LLVM's dependencies and wait"
+    echo "      for confirmation without showing its prompt. If output stops,"
+    echo "      press the 'y' key once to proceed (Enter is not required)."
     brew install llvm
   fi
   srts_configure_drjit_llvm
