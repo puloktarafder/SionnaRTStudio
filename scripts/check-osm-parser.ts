@@ -14,7 +14,7 @@ const data: OverpassData = {
     } },
     { type: 'node', id: 20, lat: 38.89, lon: -77.11 },
     { type: 'node', id: 21, lat: 39.01, lon: -76.99 },
-    { type: 'way', id: 11, nodes: [20, 21], tags: { highway: 'primary' } },
+    { type: 'way', id: 11, nodes: [20, 21], tags: { highway: 'primary', name: 'Georgia Avenue NW' } },
     { type: 'node', id: 30, lat: 38.96, lon: -77.06 },
     { type: 'node', id: 31, lat: 38.96, lon: -77.05 },
     { type: 'node', id: 32, lat: 38.97, lon: -77.05 },
@@ -37,6 +37,7 @@ assert.equal(school?.levels, 2);
 
 const road = first.find((feature) => feature.id === 'osm_11');
 assert.equal(road?.category, 'infrastructure');
+assert.equal(road?.name, 'Georgia Avenue NW');
 assert.deepEqual(road?.points, [
   { lat: bounds.south, lon: bounds.west },
   { lat: bounds.north, lon: bounds.east },

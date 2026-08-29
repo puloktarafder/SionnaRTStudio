@@ -18,6 +18,7 @@ class ENUVector(BaseModel):
 
 class BuildingFootprint(BaseModel):
     id: str
+    name: Optional[str] = None
     enuPoints: List[ENUVector]
     height: float
     category: Literal["building", "infrastructure", "terrain", "water"]

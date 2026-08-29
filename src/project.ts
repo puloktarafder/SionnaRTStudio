@@ -113,6 +113,7 @@ const isReceiver = (value: unknown): value is Receiver =>
 const isBuilding = (value: unknown): value is BuildingFootprint =>
   isRecord(value) &&
   typeof value.id === 'string' &&
+  (value.name === undefined || typeof value.name === 'string') &&
   Array.isArray(value.points) &&
   value.points.every((point) =>
     isRecord(point) && isFiniteNumber(point.lat) && isFiniteNumber(point.lon),

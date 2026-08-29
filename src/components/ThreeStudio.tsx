@@ -11,7 +11,7 @@ import { cn } from '../lib/utils';
 import { enuToLatLon, isPointInPolygon } from '../utils';
 import { RadioMapGrid } from '../types';
 import { ColormapName, sampleColormap } from '../lib/colormaps';
-import { Compass, Activity } from 'lucide-react';
+import { Compass, Activity, Camera } from 'lucide-react';
 
 // Sample the selected colormap at t in [0,1] into `out`.
 function colormapColor(name: ColormapName, t: number, out: THREE.Color): THREE.Color {
@@ -88,6 +88,64 @@ function makeLabelSprite(text: string, borderColor: string): THREE.Sprite {
   return sprite;
 }
 
+// Map-style street text painted into the road plane. It is deliberately not a
+// billboard: orbiting/panning the camera must move the name exactly with the
+// street, just like text printed on a physical map surface.
+function makeStreetLabelMesh(
+  text: string,
+  segmentLength: number,
+  maxAnisotropy: number,
+): THREE.Mesh | null {
+  const fontSize = 64;
+  const padX = 18;
+  const padY = 12;
+  const measure = document.createElement('canvas').getContext('2d')!;
+  measure.font = `700 ${fontSize}px sans-serif`;
+  const textWidth = Math.ceil(measure.measureText(text).width);
+  const canvas = document.createElement('canvas');
+  canvas.width = textWidth + padX * 2;
+  canvas.height = fontSize + padY * 2;
+  const ctx = canvas.getContext('2d')!;
+  ctx.font = `700 ${fontSize}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = 'rgba(15, 23, 42, 0.95)';
+  ctx.lineWidth = 12;
+  ctx.strokeText(text, canvas.width / 2, canvas.height / 2);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+
+  // The asphalt ribbon is 7.5 m wide. A 4.2 m text height gives the label the
+  // visual weight of a web-map road name while retaining side clearance.
+  const naturalHeight = 4.2;
+  const naturalWidth = naturalHeight * canvas.width / canvas.height;
+  const maxWidth = Math.min(48, Math.max(7, segmentLength - 4));
+  const scale = Math.min(1, maxWidth / naturalWidth);
+  if (scale < 0.42) return null; // too cramped to be useful at map scale
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  texture.anisotropy = Math.min(8, maxAnisotropy);
+  const material = new THREE.MeshBasicMaterial({
+    map: texture,
+    transparent: true,
+    alphaTest: 0.08,
+    // Respect scene geometry: a road name must not render through a building.
+    depthTest: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  });
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(naturalWidth * scale, naturalHeight * scale),
+    material,
+  );
+  mesh.renderOrder = 12;
+  return mesh;
+}
+
 interface ThreeStudioProps {
   buildings: BuildingFootprint[];
   anchor: GeoAnchor;
@@ -155,8 +213,10 @@ export function ThreeStudio({
 }: ThreeStudioProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const captureScreenshotRef = useRef<(() => void) | null>(null);
 
   const [fps, setFps] = useState<number>(0);
+  const [screenshotStatus, setScreenshotStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [performanceMode, setPerformanceMode] = useState<'high' | 'eco'>('high');
   const [cameraMode, setCameraMode] = useState<'orbit' | 'lockTx'>('orbit');
   const [pathDrawingMode, setPathDrawingMode] = useState(false);
@@ -306,6 +366,7 @@ export function ThreeStudio({
 
     // Grouping nodes for logical clear layers
     const buildingGroup = new THREE.Group();
+    const streetLabelGroup = new THREE.Group();
     const transmitterGroup = new THREE.Group();
     const receiverGroup = new THREE.Group();
     const pathsGroup = new THREE.Group();
@@ -314,6 +375,7 @@ export function ThreeStudio({
     const interactionGroup = new THREE.Group();
 
     scene.add(buildingGroup);
+    scene.add(streetLabelGroup);
     scene.add(transmitterGroup);
     scene.add(receiverGroup);
     scene.add(pathsGroup);
@@ -324,8 +386,21 @@ export function ThreeStudio({
     // 6. BUILD GENERATOR: Building Geometry Extruders
     function rebuildBuildings3D() {
       clearGroup(buildingGroup);
+      clearGroup(streetLabelGroup);
 
       const current = stateRef.current;
+      type NamedStreetSegment = {
+        key: string;
+        name: string;
+        length: number;
+        startX: number;
+        startZ: number;
+        endX: number;
+        endZ: number;
+        angle: number;
+      };
+      const namedStreetSegments: NamedStreetSegment[] = [];
+
       current.buildings.forEach(b => {
         const pts = b.enuPoints;
         if (pts.length < 2) return;
@@ -344,6 +419,28 @@ export function ThreeStudio({
             const mx = (p1.x + p2.x) / 2;
             const mz = -(p1.y + p2.y) / 2; // Negate North-South for Three.js Z-axis
             const angle = Math.atan2(dy, dx); // Angle of rotation in XZ
+
+            // Preserve every named segment. The layout pass below repeats a
+            // street name at controlled intervals across its visible extent.
+            const streetName = b.name?.trim();
+            if (streetName) {
+              const key = streetName.toLocaleLowerCase();
+              let labelAngle = angle;
+              // Choose one consistent reading direction for the north-up
+              // scene while keeping the text baseline parallel to the road.
+              if (labelAngle > Math.PI / 2) labelAngle -= Math.PI;
+              if (labelAngle < -Math.PI / 2) labelAngle += Math.PI;
+              namedStreetSegments.push({
+                key,
+                name: streetName,
+                length: segLen,
+                startX: p1.x,
+                startZ: -p1.y,
+                endX: p2.x,
+                endZ: -p2.y,
+                angle: labelAngle,
+              });
+            }
 
             // Use a gorgeous, high-contrast dark asphalt ribbon (strongly distinct against ground and buildings)
             const roadGeom = new THREE.PlaneGeometry(segLen, 7.5);
@@ -539,6 +636,69 @@ export function ThreeStudio({
             new THREE.LineBasicMaterial({ color: 0x1e293b, linewidth: 1.5 }) // Dark Slate ink-blueprint borders for crisp silhouette
           );
           buildingGroup.add(outlineLine);
+        }
+      });
+
+      // OSM splits roads at junctions and sometimes across multiple ways. Group
+      // all pieces by normalized name, then place repeated labels roughly every
+      // block along the visible street. Limits prevent dense maps from turning
+      // into a wall of text.
+      const segmentsByStreet = new Map<string, NamedStreetSegment[]>();
+      namedStreetSegments.forEach((segment) => {
+        const group = segmentsByStreet.get(segment.key) ?? [];
+        group.push(segment);
+        segmentsByStreet.set(segment.key, group);
+      });
+
+      const MAX_LABELS_PER_STREET = 4;
+      const TARGET_REPEAT_METERS = 110;
+      const MIN_REPEAT_SPACING_METERS = 65;
+      const MIN_CROSS_STREET_SPACING_METERS = 12;
+      const occupied: { x: number; z: number }[] = [];
+
+      segmentsByStreet.forEach((segments) => {
+        const totalVisibleLength = segments.reduce((sum, segment) => sum + segment.length, 0);
+        const accepted: { x: number; z: number }[] = [];
+        for (const segment of segments) {
+          if (accepted.length >= MAX_LABELS_PER_STREET) break;
+
+          const count = Math.min(
+            MAX_LABELS_PER_STREET - accepted.length,
+            Math.max(1, Math.ceil(segment.length / TARGET_REPEAT_METERS)),
+          );
+          const slotLength = segment.length / count;
+
+          for (let index = 0; index < count; index++) {
+            if (accepted.length >= MAX_LABELS_PER_STREET) break;
+            const fraction = (index + 0.5) / count;
+            const x = THREE.MathUtils.lerp(segment.startX, segment.endX, fraction);
+            const z = THREE.MathUtils.lerp(segment.startZ, segment.endZ, fraction);
+            const distanceTo = (point: { x: number; z: number }) =>
+              Math.hypot(x - point.x, z - point.z);
+
+            if (accepted.some((point) => distanceTo(point) < MIN_REPEAT_SPACING_METERS)) continue;
+            if (occupied.some((point) => distanceTo(point) < MIN_CROSS_STREET_SPACING_METERS)) continue;
+
+            const label = makeStreetLabelMesh(
+              segment.name,
+              // Curved OSM ways are often made of many short line segments.
+              // Let a label span adjacent pieces when the named street has
+              // enough total visible length, rather than dropping every name.
+              Math.max(slotLength, Math.min(TARGET_REPEAT_METERS, totalVisibleLength)),
+              renderer.capabilities.getMaxAnisotropy(),
+            );
+            if (!label) continue;
+
+            // Apply rotations to the geometry in the same order as the asphalt
+            // ribbon above. This keeps the decal fixed to the road during orbit.
+            label.geometry.rotateX(-Math.PI / 2);
+            label.geometry.rotateY(segment.angle);
+            label.position.set(x, 0.24, z);
+            streetLabelGroup.add(label);
+            const position = { x, z };
+            accepted.push(position);
+            occupied.push(position);
+          }
         }
       });
     }
@@ -981,6 +1141,34 @@ export function ThreeStudio({
 
     animate();
 
+    // Capture on demand without preserveDrawingBuffer (which would penalize
+    // every frame). Re-render once, then encode the full backing canvas so a
+    // Retina/HiDPI viewport exports at its native pixel resolution.
+    captureScreenshotRef.current = () => {
+      setScreenshotStatus('saving');
+      controls.update();
+      watchAndRedraw();
+      renderer.render(scene, camera);
+      renderer.domElement.toBlob((blob) => {
+        if (!blob) {
+          setScreenshotStatus('error');
+          return;
+        }
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `sionna_rt_studio_scene_${timestamp}.png`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        // Safari may consume the blob URL after the click handler returns.
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+        setScreenshotStatus('saved');
+        window.setTimeout(() => setScreenshotStatus('idle'), 1800);
+      }, 'image/png');
+    };
+
     // 12. DYNAMIC STATE WATCHERS
     const resizeObserver = new ResizeObserver(() => {
       if (!containerRef.current) return;
@@ -993,13 +1181,14 @@ export function ThreeStudio({
     resizeObserver.observe(containerRef.current);
 
     return () => {
+      captureScreenshotRef.current = null;
       cancelAnimationFrame(animationFrameId);
       resizeObserver.disconnect();
       renderer.domElement.removeEventListener('click', handleContainerClick);
       renderer.domElement.removeEventListener('mousemove', handleMouseMove);
       controls.dispose();
       // Release every GPU resource this effect created.
-      [buildingGroup, transmitterGroup, receiverGroup, pathsGroup,
+      [buildingGroup, streetLabelGroup, transmitterGroup, receiverGroup, pathsGroup,
        heatmapGroup, trajectoryGroup, interactionGroup].forEach(clearGroup);
       ground.geometry.dispose();
       groundMat.dispose();
@@ -1067,6 +1256,31 @@ export function ThreeStudio({
             >
               <span className="w-1.5 h-1.5 rounded-full bg-[#6d939e] animate-pulse" />
               Place RX Device
+            </button>
+
+            <button
+              id="btn-export-scene-screenshot"
+              type="button"
+              title="Download the current 3D scene view as a full-resolution PNG"
+              onClick={() => captureScreenshotRef.current?.()}
+              disabled={screenshotStatus === 'saving'}
+              className={cn(
+                "px-3.5 py-1.5 text-[12px] font-bold rounded flex items-center gap-1.5 transition-all shadow-sm cursor-pointer border",
+                screenshotStatus === 'error'
+                  ? "bg-red-50 text-red-700 border-red-300"
+                  : screenshotStatus === 'saved'
+                    ? "bg-emerald-50 text-emerald-700 border-emerald-300"
+                    : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50 hover:text-slate-900",
+              )}
+            >
+              <Camera className="w-3.5 h-3.5" />
+              {screenshotStatus === 'saving'
+                ? 'Saving…'
+                : screenshotStatus === 'saved'
+                  ? 'PNG Saved'
+                  : screenshotStatus === 'error'
+                    ? 'Capture Failed'
+                    : 'Screenshot'}
             </button>
 
             {activeMode === 'playback' && (

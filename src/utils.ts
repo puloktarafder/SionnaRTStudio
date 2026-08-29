@@ -197,6 +197,7 @@ interface OsmClassification {
   height: number;
   material: string;
   levels?: number;
+  name?: string;
 }
 
 // Classify a tagged OSM element into a scene feature (or null if not rendered).
@@ -220,7 +221,14 @@ function classifyOsmTags(tags: Record<string, string>, elemId: string | number):
     };
   }
   if (tags.highway) {
-    return { category: 'infrastructure', type: tags.highway, height: 0.1, material: 'itu_dry_ground' };
+    const name = tags.name?.trim() || tags.ref?.trim() || undefined;
+    return {
+      category: 'infrastructure',
+      type: tags.highway,
+      height: 0.1,
+      material: 'itu_dry_ground',
+      name,
+    };
   }
   if (
     tags.leisure === 'park' ||
@@ -380,6 +388,7 @@ export function parseOsmElements(
 
     buildings.push({
       id,
+      name: cls.name,
       points,
       enuPoints: points.map((p) => latLonToENU(p.lat, p.lon, anchor)),
       height: cls.height,
@@ -525,6 +534,7 @@ export function exportGeoJSON(buildings: BuildingFootprint[], anchor: GeoAnchor)
       type: 'Feature',
       properties: {
         id: b.id,
+        name: b.name,
         height: b.height,
         category: b.category,
         type: b.type,

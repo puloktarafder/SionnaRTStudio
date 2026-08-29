@@ -16,6 +16,8 @@ export interface ENUVector {
 
 export interface BuildingFootprint {
   id: string;
+  /** OSM feature label, primarily used for named roads in the 3D map. */
+  name?: string;
   points: { lat: number; lon: number }[];
   enuPoints: ENUVector[];
   height: number;
